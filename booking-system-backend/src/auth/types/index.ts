@@ -1,0 +1,64 @@
+import { UserRole } from '../../users/entities/user.entity';
+
+export type JwtPayload = {
+  sub: string;
+  role: UserRole;
+  tenant_id: string | null;
+  sid?: string | null;
+  token_version?: number;
+};
+
+export type RefreshJwtPayload = {
+  sub: string;
+  sid: string;
+  jti: string;
+  token_version: number;
+};
+
+export type MfaChallengePayload = {
+  sub: string;
+  purpose: 'mfa_login';
+  jti: string;
+};
+
+export type CurrentJwtUser = {
+  sub: string;
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  tenant_id: string | null;
+  session_id: string | null;
+  token_version: number;
+  is_active: boolean;
+  tenant: {
+    id: string;
+    name: string;
+    slug: string;
+    is_active: boolean;
+  } | null;
+};
+
+export type AuthAccessTokenResponse = {
+  access_token: string;
+};
+
+export type AuthMfaChallengeResponse = {
+  mfa_required: true;
+  challenge_token: string;
+  expires_at: string;
+  user: {
+    email: string;
+    name: string;
+    role: UserRole;
+  };
+};
+
+export type AuthLoginResponse = AuthAccessTokenResponse | AuthMfaChallengeResponse;
+
+export type AuthTokensBundle = {
+  access_token: string;
+  refresh_token: string;
+  csrf_token: string;
+  refresh_expires_at: Date;
+};

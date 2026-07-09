@@ -1,0 +1,76 @@
+import { Module } from '@nestjs/common';
+import { AuthModule } from './auth/auth.module';
+import { TenantModule } from './tenant/tenant.module';
+import { UsersModule } from './users/user.module';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { validateEnv } from './config/env.validation';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { makeTypeOrmConfig } from './database/typeorm.config';
+import { AuditModule } from './audit/audit.module';
+import { ServicesModule } from './services/services.module';
+import { EmployeesModule } from './employees/employees.module';
+import { TenantSettingsModule } from './tenant-settings/tenant-settings.module';
+import { BookingsModule } from './bookings/bookings.module';
+import { DashboardModule } from './dashboard/dashboard.module';
+import { RemindersModule } from './reminders/reminders.module';
+import { ReportsModule } from './reports/reports.module';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { ScheduleModule } from '@nestjs/schedule';
+import { SentryGlobalFilter, SentryModule } from '@sentry/nestjs/setup';
+import { HttpPerformanceInterceptor } from './common/performance/http-performance.interceptor';
+
+@Module({
+  imports: [
+    AuthModule,
+    TenantModule,
+    UsersModule,
+    AuditModule,
+    ServicesModule,
+    EmployeesModule,
+    BookingsModule,
+    DashboardModule,
+    RemindersModule,
+    ReportsModule,
+    TenantSettingsModule,
+    SentryModule.forRoot(),
+    ScheduleModule.forRoot(),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      validate: validateEnv,
+    }),
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        throttlers: [
+          {
+            name: 'default',
+            ttl: config.get<number>('RATE_LIMIT_TTL_MS', 60_000),
+            limit: config.get<number>('RATE_LIMIT_LIMIT', 120),
+          },
+        ],
+      }),
+    }),
+
+    TypeOrmModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => makeTypeOrmConfig(config),
+    }),
+  ],
+  controllers: [],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_FILTER,
+      useClass: SentryGlobalFilter,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: HttpPerformanceInterceptor,
+    },
+  ],
+})
+export class AppModule {}

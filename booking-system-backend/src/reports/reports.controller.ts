@@ -1,0 +1,42 @@
+import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
+import type { Response } from 'express';
+import { JwtAuthGuard } from '../auth/guards/jwt.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import type { CurrentJwtUser } from '../auth/types';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
+import { ReportsOverviewQueryDto } from './dto/reports-overview-query.dto';
+import { ReportsService } from './reports.service';
+import { ApiBearerAuth, ApiProduces, ApiTags } from '@nestjs/swagger';
+
+@ApiTags('Reports')
+@ApiBearerAuth('access-token')
+@Controller('reports')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('SUPER_ADMIN', 'TENANT_ADMIN')
+export class ReportsController {
+  constructor(private readonly reportsService: ReportsService) {}
+
+  @Get('overview')
+  overview(@Query() query: ReportsOverviewQueryDto, @CurrentUser() currentUser: CurrentJwtUser) {
+    return this.reportsService.getOverview(currentUser, query);
+  }
+
+  @Get('export')
+  @ApiProduces('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  async export(
+    @Query() query: ReportsOverviewQueryDto,
+    @CurrentUser() currentUser: CurrentJwtUser,
+    @Res() response: Response,
+  ): Promise<void> {
+    const exported = await this.reportsService.buildExcelExport(currentUser, query);
+
+    response.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    response.setHeader('Content-Disposition', `attachment; filename="${exported.fileName}"`);
+    response.setHeader('Content-Length', exported.content.length.toString());
+    response.send(exported.content);
+  }
+}

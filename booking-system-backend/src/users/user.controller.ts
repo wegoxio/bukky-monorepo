@@ -1,0 +1,47 @@
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { JwtAuthGuard } from '../auth/guards/jwt.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
+import { UserService } from './user.service';
+import { CreateTenantAdminDto } from './dto/create-tenant-admin.dto';
+import { UpdateTenantAdminDto } from './dto/update-tenant-admin.dto';
+import type { CurrentJwtUser } from '../auth/types';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+
+@ApiTags('Users')
+@ApiBearerAuth('access-token')
+@Controller('users')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('SUPER_ADMIN')
+export class UsersController {
+  constructor(private readonly usersService: UserService) {}
+
+  @Get('tenant-admins')
+  findTenantAdmins(@Query() query: PaginationQueryDto) {
+    return this.usersService.findTenantAdmins(query);
+  }
+
+  @Get('tenant-admins/:id')
+  findTenantAdminById(@Param('id') id: string) {
+    return this.usersService.findTenantAdminById(id);
+  }
+
+  @Post('tenant-admins')
+  createTenantAdmin(
+    @Body() data: CreateTenantAdminDto,
+    @CurrentUser() currentUser: CurrentJwtUser,
+  ) {
+    return this.usersService.createTenantAdmin(data, currentUser);
+  }
+
+  @Patch('tenant-admins/:id')
+  updateTenantAdmin(
+    @Param('id') id: string,
+    @Body() data: UpdateTenantAdminDto,
+    @CurrentUser() currentUser: CurrentJwtUser,
+  ) {
+    return this.usersService.updateTenantAdmin(id, data, currentUser);
+  }
+}

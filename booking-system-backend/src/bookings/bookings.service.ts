@@ -1,0 +1,2296 @@
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { createHash, randomBytes } from 'crypto';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { AuditService } from '../audit/audit.service';
+import { normalizePhoneInput } from '../common/phone/phone.util';
+import { calculateLineTotal, normalizeMoney } from '../common/money/money.util';
+import { Employee } from '../employees/entities/employee.entity';
+import { NotificationsService } from '../notifications/notifications.service';
+import { Service } from '../services/entity/service.entity';
+import { Tenant } from '../tenant/entities/tenant.entity';
+import { Brackets, DataSource, In, LessThan, MoreThan, Repository } from 'typeorm';
+import { Booking } from './entities/booking.entity';
+import { BookingItem } from './entities/booking-item.entity';
+import { EmployeeScheduleRule } from './entities/employee-schedule-rule.entity';
+import { EmployeeScheduleBreak } from './entities/employee-schedule-break.entity';
+import { EmployeeTimeOff } from './entities/employee-time-off.entity';
+import { EligibleEmployeesQueryDto } from './dto/eligible-employees-query.dto';
+import { AvailabilityQueryDto } from './dto/availability-query.dto';
+import { SetEmployeeScheduleDto } from './dto/set-employee-schedule.dto';
+import { CreateEmployeeTimeOffDto } from './dto/create-employee-time-off.dto';
+import {
+  formatDateInTimeZone,
+  generateSlots,
+  getDayOfWeekFromDateString,
+  getUtcRangeForLocalDate,
+  hasOverlappingTimeRanges,
+  parseTimeToMinutes,
+  subtractIntervals,
+  zonedDateTimeToUtc,
+} from './bookings.time-utils';
+import { CreateBookingDto } from './dto/create-booking.dto';
+import {
+  BOOKING_BLOCKING_STATUSES,
+  BOOKING_CANCELLATION_STATUSES,
+  BOOKING_STATUSES,
+  BOOKING_STATUS_TRANSITIONS,
+  type BookingSource,
+  type BookingStatus,
+} from './bookings.constants';
+import { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
+import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
+import { RescheduleBookingDto } from './dto/reschedule-booking.dto';
+import {
+  PublicBookingConfirmation,
+  PublicBookingEmployee,
+  PublicBookingManagement,
+  PublicBookingService,
+} from './bookings-public.types';
+import { CreateManualBookingDto } from './dto/create-manual-booking.dto';
+import { ReschedulePublicBookingDto } from './dto/reschedule-public-booking.dto';
+
+type CurrentJwtUser = {
+  sub: string;
+  role: 'SUPER_ADMIN' | 'TENANT_ADMIN';
+  tenant_id: string | null;
+};
+
+type BookingCreationDtoLike = {
+  employee_id: string;
+  service_ids: string[];
+  start_at_utc: string;
+  party_size?: number;
+  customer_name: string;
+  customer_email?: string | null;
+  customer_phone?: string | null;
+  customer_phone_country_iso2?: string | null;
+  customer_phone_national_number?: string | null;
+  notes?: string | null;
+};
+
+type BookingCreationMode = 'SLOT' | 'MANUAL';
+
+type CreateBookingOptions = {
+  actorUserId: string | null;
+  source: BookingSource;
+  creationMode: BookingCreationMode;
+  status?: BookingStatus;
+  cancellationReason?: string | null;
+  allowOverlap?: boolean;
+  sendCreateNotifications?: boolean;
+  waitForCreateNotifications?: boolean;
+  idempotencyKey?: string | null;
+};
+
+type Interval = {
+  start: Date;
+  end: Date;
+};
+
+@Injectable()
+export class BookingsService {
+  constructor(
+    @InjectRepository(Booking)
+    private readonly bookingsRepository: Repository<Booking>,
+    @InjectRepository(EmployeeScheduleRule)
+    private readonly scheduleRulesRepository: Repository<EmployeeScheduleRule>,
+    @InjectRepository(EmployeeScheduleBreak)
+    private readonly scheduleBreaksRepository: Repository<EmployeeScheduleBreak>,
+    @InjectRepository(EmployeeTimeOff)
+    private readonly employeeTimeOffRepository: Repository<EmployeeTimeOff>,
+    @InjectRepository(Employee)
+    private readonly employeesRepository: Repository<Employee>,
+    @InjectRepository(Service)
+    private readonly servicesRepository: Repository<Service>,
+    @InjectRepository(Tenant)
+    private readonly tenantsRepository: Repository<Tenant>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
+    private readonly auditService: AuditService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
+
+  async findEligibleEmployees(
+    query: EligibleEmployeesQueryDto,
+    currentUser: CurrentJwtUser,
+  ): Promise<Employee[]> {
+    const tenantId = this.requireTenantId(currentUser);
+    return this.findEligibleEmployeesByTenantId(tenantId, query.service_ids);
+  }
+
+  async listPublicServicesByTenantSlug(tenantSlug: string): Promise<PublicBookingService[]> {
+    const tenant = await this.findActiveTenantBySlug(tenantSlug);
+    const services = await this.servicesRepository.find({
+      where: {
+        tenant_id: tenant.id,
+        is_active: true,
+      },
+      relations: {
+        employees: true,
+      },
+      order: {
+        sort_order: 'ASC',
+        created_at: 'DESC',
+      },
+    });
+
+    const publicEmployeeWorkingDays = await this.buildPublicEmployeeWorkingDaysMap(
+      tenant.id,
+      services.flatMap((service) => service.employees.map((employee) => employee.id)),
+    );
+
+    return services
+      .map((service) => {
+        const eligibleEmployees = service.employees
+          .filter((employee) => employee.is_active && employee.tenant_id === tenant.id)
+          .map((employee) =>
+            this.toPublicBookingEmployee(employee, publicEmployeeWorkingDays.get(employee.id)),
+          );
+
+        if (eligibleEmployees.length === 0) {
+          return null;
+        }
+
+        return {
+          id: service.id,
+          name: service.name,
+          description: service.description,
+          instructions: service.instructions,
+          duration_minutes: service.duration_minutes,
+          capacity: service.capacity,
+          min_capacity: service.min_capacity,
+          max_capacity: service.max_capacity,
+          min_party_size: service.min_party_size,
+          max_party_size: service.max_party_size,
+          slot_capacity: service.slot_capacity,
+          pricing_model: service.pricing_model,
+          requires_confirmation: service.requires_confirmation,
+          price: Number(service.price).toFixed(2),
+          currency: service.currency,
+          is_active: service.is_active,
+          employees: eligibleEmployees,
+        };
+      })
+      .filter((service): service is PublicBookingService => service !== null);
+  }
+
+  async findPublicEligibleEmployeesByTenantSlug(
+    tenantSlug: string,
+    query: EligibleEmployeesQueryDto,
+  ): Promise<PublicBookingEmployee[]> {
+    const tenant = await this.findActiveTenantBySlug(tenantSlug);
+    const employees = await this.findEligibleEmployeesByTenantId(tenant.id, query.service_ids);
+    const publicEmployeeWorkingDays = await this.buildPublicEmployeeWorkingDaysMap(
+      tenant.id,
+      employees.map((employee) => employee.id),
+    );
+
+    return employees.map((employee) =>
+      this.toPublicBookingEmployee(employee, publicEmployeeWorkingDays.get(employee.id)),
+    );
+  }
+
+  async setEmployeeSchedule(
+    employeeId: string,
+    dto: SetEmployeeScheduleDto,
+    currentUser: CurrentJwtUser,
+  ): Promise<{
+    employee_id: string;
+    schedule_timezone: string;
+    slot_interval_minutes: number;
+    working_hours: EmployeeScheduleRule[];
+    breaks: EmployeeScheduleBreak[];
+  }> {
+    const tenantId = this.requireTenantId(currentUser);
+    const employee = await this.findTenantEmployee(employeeId, tenantId);
+    const existingWorkingHoursCount = await this.scheduleRulesRepository.count({
+      where: {
+        tenant_id: tenantId,
+        employee_id: employee.id,
+        is_active: true,
+      },
+    });
+    const scheduleAction =
+      existingWorkingHoursCount > 0 ? 'EMPLOYEE_SCHEDULE_UPDATED' : 'EMPLOYEE_SCHEDULE_CREATED';
+
+    const scheduleTimezone = dto.schedule_timezone?.trim() || employee.schedule_timezone || 'UTC';
+    this.assertValidTimezone(scheduleTimezone);
+
+    if (hasOverlappingTimeRanges(dto.working_hours)) {
+      throw new BadRequestException('El horario laboral contiene intervalos superpuestos');
+    }
+
+    if (dto.breaks && hasOverlappingTimeRanges(dto.breaks)) {
+      throw new BadRequestException('Los descansos contienen intervalos superpuestos');
+    }
+
+    if (dto.breaks && dto.breaks.length > 0) {
+      this.ensureBreaksInsideWorkingHours(dto.working_hours, dto.breaks);
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.getRepository(Employee).update(
+        { id: employee.id, tenant_id: tenantId },
+        {
+          schedule_timezone: scheduleTimezone,
+        },
+      );
+
+      await manager.getRepository(EmployeeScheduleRule).delete({
+        tenant_id: tenantId,
+        employee_id: employee.id,
+      });
+      await manager.getRepository(EmployeeScheduleBreak).delete({
+        tenant_id: tenantId,
+        employee_id: employee.id,
+      });
+
+      const scheduleRules = dto.working_hours.map((interval) =>
+        manager.getRepository(EmployeeScheduleRule).create({
+          tenant_id: tenantId,
+          employee_id: employee.id,
+          day_of_week: interval.day_of_week,
+          start_time_local: this.normalizeLocalTime(interval.start_time_local),
+          end_time_local: this.normalizeLocalTime(interval.end_time_local),
+          is_active: true,
+        }),
+      );
+
+      if (scheduleRules.length > 0) {
+        await manager.getRepository(EmployeeScheduleRule).save(scheduleRules);
+      }
+
+      const scheduleBreaks = (dto.breaks ?? []).map((interval) =>
+        manager.getRepository(EmployeeScheduleBreak).create({
+          tenant_id: tenantId,
+          employee_id: employee.id,
+          day_of_week: interval.day_of_week,
+          start_time_local: this.normalizeLocalTime(interval.start_time_local),
+          end_time_local: this.normalizeLocalTime(interval.end_time_local),
+          is_active: true,
+        }),
+      );
+
+      if (scheduleBreaks.length > 0) {
+        await manager.getRepository(EmployeeScheduleBreak).save(scheduleBreaks);
+      }
+    });
+
+    await this.auditService.log({
+      actor_user_id: currentUser.sub,
+      tenant_id: tenantId,
+      action: scheduleAction,
+      entity: 'employee',
+      entity_id: employee.id,
+      metadata: {
+        schedule_timezone: scheduleTimezone,
+        slot_interval_minutes: employee.slot_interval_minutes ?? 15,
+        working_hours_count: dto.working_hours.length,
+        breaks_count: dto.breaks?.length ?? 0,
+      },
+    });
+
+    return this.getEmployeeSchedule(employee.id, currentUser);
+  }
+
+  async getEmployeeSchedule(
+    employeeId: string,
+    currentUser: CurrentJwtUser,
+  ): Promise<{
+    employee_id: string;
+    schedule_timezone: string;
+    slot_interval_minutes: number;
+    working_hours: EmployeeScheduleRule[];
+    breaks: EmployeeScheduleBreak[];
+    active_time_off: EmployeeTimeOff[];
+  }> {
+    const tenantId = this.requireTenantId(currentUser);
+    const employee = await this.findTenantEmployee(employeeId, tenantId);
+
+    const [workingHours, breaks, activeTimeOff] = await Promise.all([
+      this.scheduleRulesRepository.find({
+        where: {
+          tenant_id: tenantId,
+          employee_id: employee.id,
+          is_active: true,
+        },
+        order: {
+          day_of_week: 'ASC',
+          start_time_local: 'ASC',
+        },
+      }),
+      this.scheduleBreaksRepository.find({
+        where: {
+          tenant_id: tenantId,
+          employee_id: employee.id,
+          is_active: true,
+        },
+        order: {
+          day_of_week: 'ASC',
+          start_time_local: 'ASC',
+        },
+      }),
+      this.employeeTimeOffRepository.find({
+        where: {
+          tenant_id: tenantId,
+          employee_id: employee.id,
+          is_active: true,
+          end_at_utc: MoreThan(new Date()),
+        },
+        order: {
+          start_at_utc: 'ASC',
+        },
+      }),
+    ]);
+
+    return {
+      employee_id: employee.id,
+      schedule_timezone: employee.schedule_timezone || 'UTC',
+      slot_interval_minutes: employee.slot_interval_minutes ?? 15,
+      working_hours: workingHours,
+      breaks,
+      active_time_off: activeTimeOff,
+    };
+  }
+
+  async createEmployeeTimeOff(
+    employeeId: string,
+    dto: CreateEmployeeTimeOffDto,
+    currentUser: CurrentJwtUser,
+  ): Promise<EmployeeTimeOff> {
+    const tenantId = this.requireTenantId(currentUser);
+    const employee = await this.findTenantEmployee(employeeId, tenantId);
+
+    const startAt = new Date(dto.start_at_utc);
+    const endAt = new Date(dto.end_at_utc);
+
+    if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime())) {
+      throw new BadRequestException('Rango de bloqueo inválido');
+    }
+
+    if (endAt.getTime() <= startAt.getTime()) {
+      throw new BadRequestException('end_at_utc debe ser mayor que start_at_utc');
+    }
+
+    const created = await this.dataSource.transaction(async (manager) => {
+      const lockedEmployee = await manager.getRepository(Employee).findOne({
+        where: { id: employee.id, tenant_id: tenantId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!lockedEmployee) {
+        throw new NotFoundException('No se encontrÃ³ el profesional');
+      }
+
+      const conflictingBooking = await manager.getRepository(Booking).findOne({
+        where: {
+          tenant_id: tenantId,
+          employee_id: employee.id,
+          status: In([...BOOKING_BLOCKING_STATUSES]),
+          busy_start_at_utc: LessThan(endAt),
+          busy_end_at_utc: MoreThan(startAt),
+        },
+      });
+      if (conflictingBooking) {
+        throw new ConflictException(
+          'La ausencia se solapa con una cita activa. Cancela o reasigna la cita antes de bloquear el horario.',
+        );
+      }
+
+      return manager.getRepository(EmployeeTimeOff).save(
+        manager.getRepository(EmployeeTimeOff).create({
+          tenant_id: tenantId,
+          employee_id: employee.id,
+          start_at_utc: startAt,
+          end_at_utc: endAt,
+          reason: dto.reason?.trim() ?? null,
+          is_active: true,
+        }),
+      );
+    });
+
+    await this.auditService.log({
+      actor_user_id: currentUser.sub,
+      tenant_id: tenantId,
+      action: 'EMPLOYEE_TIME_OFF_CREATED',
+      entity: 'employee',
+      entity_id: employee.id,
+      metadata: {
+        time_off_id: created.id,
+        start_at_utc: created.start_at_utc.toISOString(),
+        end_at_utc: created.end_at_utc.toISOString(),
+      },
+    });
+
+    return created;
+  }
+
+  async removeEmployeeTimeOff(
+    employeeId: string,
+    timeOffId: string,
+    currentUser: CurrentJwtUser,
+  ): Promise<{ id: string }> {
+    const tenantId = this.requireTenantId(currentUser);
+    const employee = await this.findTenantEmployee(employeeId, tenantId);
+
+    const timeOff = await this.employeeTimeOffRepository.findOne({
+      where: {
+        id: timeOffId,
+        tenant_id: tenantId,
+        employee_id: employee.id,
+      },
+    });
+
+    if (!timeOff) {
+      throw new NotFoundException('No se encontró el bloqueo del profesional');
+    }
+
+    await this.employeeTimeOffRepository.remove(timeOff);
+
+    await this.auditService.log({
+      actor_user_id: currentUser.sub,
+      tenant_id: tenantId,
+      action: 'EMPLOYEE_TIME_OFF_REMOVED',
+      entity: 'employee',
+      entity_id: employee.id,
+      metadata: {
+        time_off_id: timeOff.id,
+      },
+    });
+
+    return { id: timeOff.id };
+  }
+
+  async getAvailability(
+    query: AvailabilityQueryDto,
+    currentUser: CurrentJwtUser,
+  ): Promise<{
+    employee_id: string;
+    date: string;
+    timezone: string;
+    slot_interval_minutes: number;
+    required_duration_minutes: number;
+    service_ids: string[];
+    slots: Array<{ start_at_utc: string; end_at_utc: string }>;
+  }> {
+    const tenantId = this.requireTenantId(currentUser);
+    return this.getAvailabilityByTenantId(tenantId, query);
+  }
+
+  async getPublicAvailabilityByTenantSlug(
+    tenantSlug: string,
+    query: AvailabilityQueryDto,
+  ): Promise<{
+    employee_id: string;
+    date: string;
+    timezone: string;
+    slot_interval_minutes: number;
+    required_duration_minutes: number;
+    service_ids: string[];
+    slots: Array<{ start_at_utc: string; end_at_utc: string }>;
+  }> {
+    const tenant = await this.findActiveTenantBySlug(tenantSlug);
+    return this.getAvailabilityByTenantId(tenant.id, query);
+  }
+
+  async createPublicBookingByTenantSlug(
+    tenantSlug: string,
+    dto: CreateBookingDto,
+    idempotencyKey: string,
+  ): Promise<PublicBookingConfirmation> {
+    const tenant = await this.findActiveTenantBySlug(tenantSlug);
+    const existing = await this.bookingsRepository.findOne({
+      where: { tenant_id: tenant.id, idempotency_key: idempotencyKey },
+      relations: { employee: true, items: true },
+    });
+    if (existing) {
+      return this.toPublicBookingConfirmation(existing);
+    }
+    const booking = await this.createBookingForTenant(tenant.id, dto, {
+      actorUserId: null,
+      source: 'WEB',
+      creationMode: 'SLOT',
+      sendCreateNotifications: true,
+      waitForCreateNotifications: true,
+      idempotencyKey,
+    });
+    return this.toPublicBookingConfirmation(booking);
+  }
+
+  async createBooking(
+    dto: CreateBookingDto | CreateManualBookingDto,
+    currentUser: CurrentJwtUser,
+    creationMode: BookingCreationMode = 'SLOT',
+  ): Promise<Booking> {
+    const tenantId = this.requireTenantId(currentUser);
+
+    if (creationMode === 'MANUAL') {
+      const manualDto = dto as CreateManualBookingDto;
+      return this.createBookingForTenant(tenantId, manualDto, {
+        actorUserId: currentUser.sub,
+        source: 'MANUAL',
+        creationMode: 'MANUAL',
+        status: manualDto.status,
+        cancellationReason: manualDto.cancellation_reason?.trim() || null,
+        allowOverlap: manualDto.allow_overlap ?? false,
+        sendCreateNotifications: false,
+      });
+    }
+
+    const strictDto = dto as CreateBookingDto;
+    return this.createBookingForTenant(tenantId, strictDto, {
+      actorUserId: currentUser.sub,
+      source: strictDto.source ?? 'ADMIN',
+      creationMode: 'SLOT',
+      sendCreateNotifications: true,
+    });
+  }
+
+  async createManualBooking(
+    dto: CreateManualBookingDto,
+    currentUser: CurrentJwtUser,
+  ): Promise<Booking> {
+    return this.createBooking(dto, currentUser, 'MANUAL');
+  }
+
+  async listBookings(
+    query: ListBookingsQueryDto,
+    currentUser: CurrentJwtUser,
+  ): Promise<{
+    data: Booking[];
+    pagination: {
+      page: number;
+      limit: number;
+      total: number;
+      total_pages: number;
+    };
+    summary: { today_count: number };
+  }> {
+    const tenantId = this.requireTenantId(currentUser);
+    const page = this.normalizePage(query.page);
+    const limit = this.normalizeLimit(query.limit);
+    const timezone = query.timezone?.trim() || 'UTC';
+    const sort = query.sort ?? (query.date_from || query.date_to ? 'start_asc' : 'created_desc');
+    this.assertValidTimezone(timezone);
+    const todayRange = getUtcRangeForLocalDate(
+      formatDateInTimeZone(new Date(), timezone),
+      timezone,
+    );
+    const todayCount = await this.bookingsRepository
+      .createQueryBuilder('today_booking')
+      .where('today_booking.tenant_id = :tenantId', { tenantId })
+      .andWhere(
+        'today_booking.start_at_utc >= :todayStart AND today_booking.start_at_utc < :todayEnd',
+        { todayStart: todayRange.start, todayEnd: todayRange.end },
+      )
+      .getCount();
+
+    const baseQb = this.bookingsRepository
+      .createQueryBuilder('booking')
+      .where('booking.tenant_id = :tenantId', { tenantId });
+
+    if (query.employee_id) {
+      baseQb.andWhere('booking.employee_id = :employeeId', {
+        employeeId: query.employee_id,
+      });
+    }
+
+    if (query.status) {
+      baseQb.andWhere('booking.status = :status', {
+        status: query.status,
+      });
+    }
+
+    if (query.date) {
+      const { start, end } = getUtcRangeForLocalDate(query.date, timezone);
+
+      baseQb.andWhere('booking.start_at_utc >= :start AND booking.start_at_utc < :end', {
+        start,
+        end,
+      });
+    } else {
+      if (query.date_from) {
+        const { start } = getUtcRangeForLocalDate(query.date_from, timezone);
+        baseQb.andWhere('booking.start_at_utc >= :dateFrom', {
+          dateFrom: start,
+        });
+      }
+
+      if (query.date_to) {
+        const { end } = getUtcRangeForLocalDate(query.date_to, timezone);
+        baseQb.andWhere('booking.start_at_utc < :dateTo', {
+          dateTo: end,
+        });
+      }
+    }
+
+    if (query.q?.trim()) {
+      const queryText = `%${query.q.trim()}%`;
+
+      baseQb.andWhere(
+        new Brackets((subQb) => {
+          subQb
+            .where("COALESCE(booking.customer_name, '') ILIKE :queryText", {
+              queryText,
+            })
+            .orWhere("COALESCE(booking.customer_email, '') ILIKE :queryText", {
+              queryText,
+            })
+            .orWhere("COALESCE(booking.customer_phone, '') ILIKE :queryText", {
+              queryText,
+            })
+            .orWhere("COALESCE(booking.customer_phone_national_number, '') ILIKE :queryText", {
+              queryText,
+            })
+            .orWhere("COALESCE(booking.customer_phone_e164, '') ILIKE :queryText", {
+              queryText,
+            })
+            .orWhere(
+              `EXISTS (
+                SELECT 1
+                FROM employees employee_search
+                WHERE employee_search.id = booking.employee_id
+                  AND employee_search.tenant_id = booking.tenant_id
+                  AND COALESCE(employee_search.name, '') ILIKE :queryText
+              )`,
+              {
+                queryText,
+              },
+            )
+            .orWhere(
+              `EXISTS (
+                SELECT 1
+                FROM booking_items booking_item_search
+                WHERE booking_item_search.booking_id = booking.id
+                  AND COALESCE(booking_item_search.service_name_snapshot, '') ILIKE :queryText
+              )`,
+              {
+                queryText,
+              },
+            );
+        }),
+      );
+    }
+
+    const total = await baseQb.clone().getCount();
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+
+    const pagedBookingIdsRaw = await baseQb
+      .clone()
+      .select('booking.id', 'id')
+      .orderBy(
+        sort === 'start_asc' ? 'booking.start_at_utc' : 'booking.created_at',
+        sort === 'start_asc' ? 'ASC' : 'DESC',
+      )
+      .addOrderBy('booking.id', sort === 'start_asc' ? 'ASC' : 'DESC')
+      .offset((page - 1) * limit)
+      .limit(limit)
+      .getRawMany<{ id: string }>();
+
+    const bookingIds = pagedBookingIdsRaw.map((row) => row.id);
+
+    if (bookingIds.length === 0) {
+      return {
+        data: [],
+        pagination: {
+          page,
+          limit,
+          total,
+          total_pages: totalPages,
+        },
+        summary: { today_count: todayCount },
+      };
+    }
+
+    const rows = await this.bookingsRepository
+      .createQueryBuilder('booking')
+      .leftJoinAndSelect('booking.employee', 'employee')
+      .leftJoinAndSelect('booking.items', 'items')
+      .where('booking.id IN (:...bookingIds)', { bookingIds })
+      .orderBy(
+        sort === 'start_asc' ? 'booking.start_at_utc' : 'booking.created_at',
+        sort === 'start_asc' ? 'ASC' : 'DESC',
+      )
+      .addOrderBy('booking.id', sort === 'start_asc' ? 'ASC' : 'DESC')
+      .addOrderBy('items.sort_order', 'ASC')
+      .getMany();
+
+    const rowsById = new Map(rows.map((row) => [row.id, row]));
+    const orderedRows = bookingIds
+      .map((bookingId) => rowsById.get(bookingId))
+      .filter((row): row is Booking => Boolean(row));
+
+    return {
+      data: orderedRows,
+      pagination: {
+        page,
+        limit,
+        total,
+        total_pages: totalPages,
+      },
+      summary: { today_count: todayCount },
+    };
+  }
+
+  async findOne(id: string, currentUser: CurrentJwtUser): Promise<Booking> {
+    const tenantId = this.requireTenantId(currentUser);
+    return this.findOneByTenantId(id, tenantId);
+  }
+
+  async updateStatus(
+    id: string,
+    dto: UpdateBookingStatusDto,
+    currentUser: CurrentJwtUser,
+  ): Promise<Booking> {
+    const tenantId = this.requireTenantId(currentUser);
+    const nextStatus = dto.status;
+    const cancellationReason = dto.cancellation_reason?.trim() || null;
+    const isCancellationStatus = this.isCancellationStatus(nextStatus);
+    const result = await this.dataSource.transaction(async (manager) => {
+      const booking = await manager.getRepository(Booking).findOne({
+        where: { id, tenant_id: tenantId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!booking) {
+        throw new NotFoundException('No se encontrÃ³ la cita');
+      }
+
+      const previousStatus = booking.status;
+      if (previousStatus === nextStatus) {
+        return { booking, previousStatus, changed: false };
+      }
+
+      const allowedTransitions =
+        BOOKING_STATUS_TRANSITIONS[previousStatus as keyof typeof BOOKING_STATUS_TRANSITIONS];
+      if (!allowedTransitions?.includes(nextStatus)) {
+        throw new ConflictException(
+          `No se puede cambiar la cita de ${this.formatBookingStatusLabel(previousStatus)} a ${this.formatBookingStatusLabel(nextStatus)}.`,
+        );
+      }
+      if (isCancellationStatus && !cancellationReason) {
+        throw new BadRequestException(
+          'Debes indicar el motivo al cancelar una cita o marcarla como no asistida.',
+        );
+      }
+      if (!isCancellationStatus && cancellationReason) {
+        throw new BadRequestException(
+          'El motivo de cancelación solo puede enviarse para citas canceladas o no asistidas',
+        );
+      }
+
+      booking.status = nextStatus;
+      if (nextStatus === 'COMPLETED') {
+        booking.completed_at_utc = new Date();
+        booking.completed_by_user_id = currentUser.sub;
+        booking.cancelled_at_utc = null;
+        booking.cancelled_by_user_id = null;
+        booking.cancellation_reason = null;
+      } else if (isCancellationStatus) {
+        booking.cancelled_at_utc = new Date();
+        booking.cancelled_by_user_id = currentUser.sub;
+        booking.cancellation_reason = cancellationReason;
+        booking.completed_at_utc = null;
+        booking.completed_by_user_id = null;
+      } else {
+        booking.completed_at_utc = null;
+        booking.completed_by_user_id = null;
+        booking.cancelled_at_utc = null;
+        booking.cancelled_by_user_id = null;
+        booking.cancellation_reason = null;
+      }
+
+      const updated = await manager.getRepository(Booking).save(booking);
+      return { booking: updated, previousStatus, changed: true };
+    });
+
+    if (!result.changed) {
+      return this.findOneByTenantId(result.booking.id, tenantId);
+    }
+    const updated = result.booking;
+
+    await this.auditService.log({
+      actor_user_id: currentUser.sub,
+      tenant_id: updated.tenant_id,
+      action: 'BOOKING_STATUS_UPDATED',
+      entity: 'booking',
+      entity_id: updated.id,
+      metadata: {
+        previous_status: result.previousStatus,
+        status: updated.status,
+        cancellation_reason: updated.cancellation_reason,
+      },
+    });
+
+    const hydratedBooking = await this.findOneByTenantId(updated.id, updated.tenant_id);
+
+    if (nextStatus === 'COMPLETED') {
+      void this.notificationsService.sendBookingLifecycleNotifications(
+        hydratedBooking,
+        'BOOKING_COMPLETED',
+      );
+    } else if (isCancellationStatus) {
+      void this.notificationsService.sendBookingLifecycleNotifications(
+        hydratedBooking,
+        'BOOKING_CANCELLED',
+      );
+    }
+
+    return hydratedBooking;
+  }
+
+  async rescheduleBooking(
+    id: string,
+    dto: RescheduleBookingDto,
+    currentUser: CurrentJwtUser,
+  ): Promise<Booking> {
+    const tenantId = this.requireTenantId(currentUser);
+    return this.rescheduleBookingByTenantId(id, dto, tenantId, currentUser.sub);
+  }
+
+  async findPublicBookingManagementByToken(token: string): Promise<PublicBookingManagement> {
+    const booking = await this.findBookingByManagementToken(token);
+    return this.toPublicBookingManagement(booking);
+  }
+
+  async getPublicBookingManagementAvailability(
+    token: string,
+    query: Pick<AvailabilityQueryDto, 'date' | 'timezone'>,
+  ): Promise<{
+    employee_id: string;
+    date: string;
+    timezone: string;
+    slot_interval_minutes: number;
+    required_duration_minutes: number;
+    service_ids: string[];
+    slots: Array<{
+      start_at_utc: string;
+      end_at_utc: string;
+      slot_capacity: number;
+      occupied_capacity: number;
+      available_capacity: number;
+      requested_party_size: number;
+    }>;
+  }> {
+    const booking = await this.findBookingByManagementToken(token);
+    const serviceIds = this.uniqueIds(booking.items.map((item) => item.service_id));
+    if (serviceIds.length !== 1) {
+      throw new BadRequestException(
+        'Esta cita no se puede reprogramar automáticamente porque no tiene un único servicio asociado.',
+      );
+    }
+
+    const availability = await this.computeAvailability({
+      tenantId: booking.tenant_id,
+      employeeId: booking.employee_id,
+      serviceIds,
+      date: query.date,
+      timezone: query.timezone,
+      partySize: this.normalizePartySize(booking.party_size),
+      excludeBookingId: booking.id,
+    });
+
+    return {
+      employee_id: availability.employee_id,
+      date: availability.date,
+      timezone: availability.timezone,
+      slot_interval_minutes: availability.slot_interval_minutes,
+      required_duration_minutes: availability.required_duration_minutes,
+      service_ids: availability.service_ids,
+      slots: availability.slots.map((slot) => ({
+        start_at_utc: slot.start_at_utc.toISOString(),
+        end_at_utc: slot.end_at_utc.toISOString(),
+        slot_capacity: slot.slot_capacity,
+        occupied_capacity: slot.occupied_capacity,
+        available_capacity: slot.available_capacity,
+        requested_party_size: slot.requested_party_size,
+      })),
+    };
+  }
+
+  async reschedulePublicBookingByManagementToken(
+    token: string,
+    dto: ReschedulePublicBookingDto,
+  ): Promise<PublicBookingManagement> {
+    const booking = await this.findBookingByManagementToken(token);
+    const updated = await this.rescheduleBookingByTenantId(
+      booking.id,
+      dto,
+      booking.tenant_id,
+      null,
+    );
+    return this.toPublicBookingManagement(updated);
+  }
+
+  private async rescheduleBookingByTenantId(
+    id: string,
+    dto: RescheduleBookingDto,
+    tenantId: string,
+    actorUserId: string | null,
+  ): Promise<Booking> {
+    const requestedStartAt = new Date(dto.start_at_utc);
+    if (Number.isNaN(requestedStartAt.getTime())) {
+      throw new BadRequestException('La nueva fecha de la cita no es válida.');
+    }
+
+    const booking = await this.findOneByTenantId(id, tenantId);
+    if (!['PENDING', 'CONFIRMED'].includes(booking.status)) {
+      throw new ConflictException('Solo puedes reprogramar citas pendientes o confirmadas.');
+    }
+
+    const serviceIds = this.uniqueIds(booking.items.map((item) => item.service_id));
+    if (serviceIds.length !== 1) {
+      throw new BadRequestException(
+        'Esta cita no se puede reprogramar automáticamente porque no tiene un único servicio asociado.',
+      );
+    }
+
+    const selectedServices = await this.resolveActiveServices(tenantId, serviceIds);
+    const selectedService = selectedServices[0];
+    const employee = await this.findTenantEmployee(booking.employee_id, tenantId, true);
+    this.assertEmployeeOffersAllServices(employee, serviceIds);
+
+    const partySize = this.normalizePartySize(booking.party_size);
+    this.assertPartySizeAllowed(selectedService, partySize);
+
+    const timezone = dto.timezone?.trim() || employee.schedule_timezone || 'UTC';
+    this.assertValidTimezone(timezone);
+    const localDate = formatDateInTimeZone(requestedStartAt, timezone);
+    const availability = await this.computeAvailability({
+      tenantId,
+      employeeId: employee.id,
+      serviceIds,
+      date: localDate,
+      timezone,
+      partySize,
+      excludeBookingId: booking.id,
+    });
+
+    const matchedSlot = availability.slots.find(
+      (slot) => slot.start_at_utc.getTime() === requestedStartAt.getTime(),
+    );
+    if (!matchedSlot) {
+      throw new ConflictException('El nuevo horario seleccionado ya no está disponible.');
+    }
+
+    const bufferBeforeMinutes = this.getTotalBufferBeforeMinutes(selectedServices);
+    const bufferAfterMinutes = this.getTotalBufferAfterMinutes(selectedServices);
+    const nextStartAt = matchedSlot.start_at_utc;
+    const nextEndAt = matchedSlot.end_at_utc;
+    const nextBusyStartAt = new Date(nextStartAt.getTime() - bufferBeforeMinutes * 60 * 1000);
+    const nextBusyEndAt = new Date(nextEndAt.getTime() + bufferAfterMinutes * 60 * 1000);
+
+    const result = await this.dataSource.transaction(async (manager) => {
+      const lockedBooking = await manager
+        .getRepository(Booking)
+        .createQueryBuilder('booking')
+        .setLock('pessimistic_write')
+        .leftJoinAndSelect('booking.items', 'items')
+        .where('booking.id = :id', { id })
+        .andWhere('booking.tenant_id = :tenantId', { tenantId })
+        .getOne();
+
+      if (!lockedBooking) {
+        throw new NotFoundException('No se encontró la cita');
+      }
+      if (!['PENDING', 'CONFIRMED'].includes(lockedBooking.status)) {
+        throw new ConflictException('Solo puedes reprogramar citas pendientes o confirmadas.');
+      }
+
+      const lockedService = await manager
+        .getRepository(Service)
+        .createQueryBuilder('service')
+        .setLock('pessimistic_read')
+        .where('service.id = :serviceId', { serviceId: selectedService.id })
+        .andWhere('service.tenant_id = :tenantId', { tenantId })
+        .andWhere('service.is_active = true')
+        .getOne();
+      if (!lockedService) {
+        throw new ConflictException('El servicio ya no está disponible.');
+      }
+      this.assertPartySizeAllowed(lockedService, partySize);
+
+      const lockedEmployee = await manager
+        .getRepository(Employee)
+        .createQueryBuilder('employee')
+        .setLock('pessimistic_write')
+        .where('employee.id = :employeeId', { employeeId: employee.id })
+        .andWhere('employee.tenant_id = :tenantId', { tenantId })
+        .andWhere('employee.is_active = true')
+        .getOne();
+      if (!lockedEmployee) {
+        throw new BadRequestException('El profesional está inactivo o no disponible');
+      }
+
+      const overlappingBookings = await manager
+        .getRepository(Booking)
+        .createQueryBuilder('booking')
+        .setLock('pessimistic_write')
+        .leftJoinAndSelect('booking.items', 'items')
+        .where('booking.tenant_id = :tenantId', { tenantId })
+        .andWhere('booking.employee_id = :employeeId', {
+          employeeId: employee.id,
+        })
+        .andWhere('booking.id <> :id', { id: lockedBooking.id })
+        .andWhere('booking.status IN (:...statuses)', {
+          statuses: [...BOOKING_BLOCKING_STATUSES],
+        })
+        .andWhere('booking.busy_start_at_utc < :busyEndAt', {
+          busyEndAt: nextBusyEndAt,
+        })
+        .andWhere('booking.busy_end_at_utc > :busyStartAt', {
+          busyStartAt: nextBusyStartAt,
+        })
+        .getMany();
+
+      if (
+        !this.hasCapacityForRequestedSlot({
+          bookings: overlappingBookings,
+          serviceId: selectedService.id,
+          partySize,
+          maxCapacity: this.getServiceSlotCapacity(lockedService),
+          startAt: nextBusyStartAt,
+          endAt: nextBusyEndAt,
+          sessionStartAt: nextStartAt,
+          sessionEndAt: nextEndAt,
+        })
+      ) {
+        throw new ConflictException('El nuevo horario seleccionado ya no está disponible.');
+      }
+
+      const previousStartAt = lockedBooking.start_at_utc;
+      const previousEndAt = lockedBooking.end_at_utc;
+      lockedBooking.start_at_utc = nextStartAt;
+      lockedBooking.end_at_utc = nextEndAt;
+      lockedBooking.busy_start_at_utc = nextBusyStartAt;
+      lockedBooking.busy_end_at_utc = nextBusyEndAt;
+
+      const updated = await manager.getRepository(Booking).save(lockedBooking);
+      return { booking: updated, previousStartAt, previousEndAt };
+    });
+
+    await this.auditService.log({
+      actor_user_id: actorUserId,
+      tenant_id: tenantId,
+      action: 'BOOKING_RESCHEDULED',
+      entity: 'booking',
+      entity_id: result.booking.id,
+      metadata: {
+        previous_start_at_utc: result.previousStartAt,
+        previous_end_at_utc: result.previousEndAt,
+        start_at_utc: result.booking.start_at_utc,
+        end_at_utc: result.booking.end_at_utc,
+      },
+    });
+
+    return this.findOneByTenantId(result.booking.id, tenantId);
+  }
+
+  private async createBookingForTenant(
+    tenantId: string,
+    dto: BookingCreationDtoLike,
+    options: CreateBookingOptions,
+  ): Promise<Booking> {
+    const serviceIds = this.uniqueIds(dto.service_ids);
+    if (serviceIds.length > 1) {
+      throw new BadRequestException('Solo se permite un servicio por cita');
+    }
+    const selectedServices = await this.resolveActiveServices(tenantId, serviceIds);
+    const selectedService = selectedServices[0];
+    if (!selectedService) {
+      throw new BadRequestException('Debes seleccionar al menos un servicio');
+    }
+    const partySize = this.normalizePartySize(dto.party_size);
+    this.assertPartySizeAllowed(selectedService, partySize);
+
+    const employee = await this.findTenantEmployee(dto.employee_id, tenantId, true);
+    this.assertEmployeeOffersAllServices(employee, serviceIds);
+
+    const startAt = new Date(dto.start_at_utc);
+    if (Number.isNaN(startAt.getTime())) {
+      throw new BadRequestException('start_at_utc de la cita es inválido');
+    }
+
+    const timezone = employee.schedule_timezone || 'UTC';
+    this.assertValidTimezone(timezone);
+    const totalDurationMinutes = this.getTotalDurationMinutes(selectedServices);
+    const bufferBeforeMinutes = this.getTotalBufferBeforeMinutes(selectedServices);
+    const bufferAfterMinutes = this.getTotalBufferAfterMinutes(selectedServices);
+    const currency = selectedServices[0]?.currency ?? 'USD';
+    const endAt = new Date(startAt.getTime() + totalDurationMinutes * 60 * 1000);
+    let busyStartAt = new Date(startAt.getTime() - bufferBeforeMinutes * 60 * 1000);
+    let busyEndAt = new Date(endAt.getTime() + bufferAfterMinutes * 60 * 1000);
+
+    if (endAt.getTime() <= startAt.getTime()) {
+      throw new BadRequestException('Duración de cita inválida');
+    }
+
+    const defaultBookingStatus =
+      options.creationMode === 'MANUAL'
+        ? startAt.getTime() < Date.now()
+          ? 'COMPLETED'
+          : 'PENDING'
+        : selectedServices.some((service) => service.requires_confirmation)
+          ? 'PENDING'
+          : 'CONFIRMED';
+    let bookingStatus = options.status ?? defaultBookingStatus;
+    const cancellationReason = options.cancellationReason?.trim() || null;
+    this.assertValidCreationStatus(bookingStatus, cancellationReason);
+
+    let shouldRequireActiveEmployee =
+      options.creationMode === 'SLOT' ||
+      (this.isBlockingStatus(bookingStatus) && endAt.getTime() > Date.now());
+
+    let persistedStartAt = startAt;
+    let persistedEndAt = endAt;
+
+    if (options.creationMode === 'SLOT') {
+      const localDate = formatDateInTimeZone(startAt, timezone);
+      const availability = await this.computeAvailability({
+        tenantId,
+        employeeId: employee.id,
+        serviceIds,
+        date: localDate,
+        timezone,
+        partySize,
+      });
+
+      const matchedSlot = availability.slots.find(
+        (slot) => slot.start_at_utc.getTime() === startAt.getTime(),
+      );
+      if (!matchedSlot) {
+        throw new ConflictException('El horario seleccionado no está disponible');
+      }
+
+      persistedStartAt = matchedSlot.start_at_utc;
+      persistedEndAt = matchedSlot.end_at_utc;
+      busyStartAt = new Date(persistedStartAt.getTime() - bufferBeforeMinutes * 60 * 1000);
+      busyEndAt = new Date(persistedEndAt.getTime() + bufferAfterMinutes * 60 * 1000);
+    } else if (
+      !options.allowOverlap &&
+      this.shouldValidateManualAvailability(bookingStatus, persistedEndAt)
+    ) {
+      await this.assertManualBookingRangeAvailable({
+        tenantId,
+        employeeId: employee.id,
+        startAt: persistedStartAt,
+        endAt: persistedEndAt,
+        busyStartAt,
+        busyEndAt,
+        timezone,
+      });
+    }
+
+    const normalizedCustomerPhone = normalizePhoneInput({
+      countryIso2: dto.customer_phone_country_iso2,
+      nationalNumber: dto.customer_phone_national_number,
+      legacyPhone: dto.customer_phone,
+      fieldLabel: 'teléfono del cliente',
+    });
+
+    const managementToken = this.generateBookingManagementToken(persistedEndAt);
+
+    const transactionResult = await this.dataSource.transaction(async (manager) => {
+      if (options.idempotencyKey) {
+        await manager.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+          `${tenantId}:${options.idempotencyKey}`,
+        ]);
+        const existingBooking = await manager.getRepository(Booking).findOne({
+          where: {
+            tenant_id: tenantId,
+            idempotency_key: options.idempotencyKey,
+          },
+        });
+        if (existingBooking) {
+          return { booking: existingBooking, created: false };
+        }
+      }
+
+      const lockedService = await manager
+        .getRepository(Service)
+        .createQueryBuilder('service')
+        .setLock('pessimistic_read')
+        .where('service.id = :serviceId', { serviceId: selectedService.id })
+        .andWhere('service.tenant_id = :tenantId', { tenantId })
+        .andWhere('service.is_active = true')
+        .getOne();
+      if (!lockedService) {
+        throw new ConflictException('El servicio ya no está disponible.');
+      }
+      this.assertPartySizeAllowed(lockedService, partySize);
+      const lockedTotalPrice = calculateLineTotal(
+        lockedService.price,
+        partySize,
+        lockedService.pricing_model ?? 'FLAT',
+      );
+      if (options.status === undefined && options.creationMode !== 'MANUAL') {
+        bookingStatus = lockedService.requires_confirmation ? 'PENDING' : 'CONFIRMED';
+        shouldRequireActiveEmployee = true;
+      }
+
+      const employeeLocked = await manager
+        .getRepository(Employee)
+        .createQueryBuilder('employee')
+        .setLock('pessimistic_write')
+        .where('employee.id = :employeeId', { employeeId: employee.id })
+        .andWhere('employee.tenant_id = :tenantId', { tenantId })
+        .getOne();
+
+      if (!employeeLocked || (shouldRequireActiveEmployee && !employeeLocked.is_active)) {
+        throw new BadRequestException('El profesional está inactivo o no disponible');
+      }
+
+      if (this.isBlockingStatus(bookingStatus)) {
+        const overlappingBookings = await manager.getRepository(Booking).find({
+          where: {
+            tenant_id: tenantId,
+            employee_id: employee.id,
+            status: In([...BOOKING_BLOCKING_STATUSES]),
+            busy_start_at_utc: LessThan(busyEndAt),
+            busy_end_at_utc: MoreThan(busyStartAt),
+          },
+          relations: {
+            items: true,
+          },
+        });
+
+        if (
+          !this.hasCapacityForRequestedSlot({
+            bookings: overlappingBookings,
+            serviceId: selectedService.id,
+            partySize,
+            maxCapacity: this.getServiceSlotCapacity(lockedService),
+            startAt: busyStartAt,
+            endAt: busyEndAt,
+            sessionStartAt: persistedStartAt,
+            sessionEndAt: persistedEndAt,
+            allowOverlap: options.allowOverlap ?? false,
+          })
+        ) {
+          throw new ConflictException(
+            options.creationMode === 'SLOT'
+              ? 'El horario seleccionado ya no está disponible.'
+              : 'El horario seleccionado se solapa con una cita activa.',
+          );
+        }
+      }
+
+      if (
+        options.creationMode === 'MANUAL' &&
+        this.isBlockingStatus(bookingStatus) &&
+        !options.allowOverlap &&
+        persistedEndAt.getTime() > Date.now()
+      ) {
+        const overlappingTimeOff = await manager.getRepository(EmployeeTimeOff).findOne({
+          where: {
+            tenant_id: tenantId,
+            employee_id: employee.id,
+            is_active: true,
+            start_at_utc: LessThan(persistedEndAt),
+            end_at_utc: MoreThan(persistedStartAt),
+          },
+        });
+
+        if (overlappingTimeOff) {
+          throw new ConflictException(
+            'El horario seleccionado se solapa con una ausencia del profesional.',
+          );
+        }
+      }
+
+      const lifecycleFields = this.buildInitialLifecycleFields(
+        bookingStatus,
+        persistedStartAt,
+        persistedEndAt,
+        options.actorUserId,
+        cancellationReason,
+      );
+
+      const created = manager.getRepository(Booking).create({
+        tenant_id: tenantId,
+        idempotency_key: options.idempotencyKey ?? null,
+        management_token_hash: managementToken.hash,
+        management_token_expires_at: managementToken.expiresAt,
+        employee_id: employee.id,
+        start_at_utc: persistedStartAt,
+        end_at_utc: persistedEndAt,
+        busy_start_at_utc: busyStartAt,
+        busy_end_at_utc: busyEndAt,
+        status: bookingStatus,
+        completed_at_utc: lifecycleFields.completed_at_utc,
+        completed_by_user_id: lifecycleFields.completed_by_user_id,
+        cancelled_at_utc: lifecycleFields.cancelled_at_utc,
+        cancelled_by_user_id: lifecycleFields.cancelled_by_user_id,
+        cancellation_reason: lifecycleFields.cancellation_reason,
+        total_duration_minutes: totalDurationMinutes,
+        party_size: partySize,
+        total_price: lockedTotalPrice,
+        currency,
+        customer_name: dto.customer_name.trim(),
+        customer_email: dto.customer_email?.trim().toLowerCase() ?? null,
+        customer_phone: normalizedCustomerPhone.display,
+        customer_phone_country_iso2: normalizedCustomerPhone.countryIso2,
+        customer_phone_national_number: normalizedCustomerPhone.nationalNumber,
+        customer_phone_e164: normalizedCustomerPhone.e164,
+        notes: dto.notes?.trim() ?? null,
+        source: options.source,
+        created_by_user_id: options.actorUserId,
+        items: [lockedService].map((service, index) =>
+          manager.getRepository(BookingItem).create({
+            service_id: service.id,
+            service_name_snapshot: service.name,
+            duration_minutes_snapshot: service.duration_minutes,
+            buffer_before_minutes_snapshot: service.buffer_before_minutes,
+            buffer_after_minutes_snapshot: service.buffer_after_minutes,
+            price_snapshot: normalizeMoney(service.price),
+            pricing_model_snapshot: service.pricing_model ?? 'FLAT',
+            unit_price_snapshot: normalizeMoney(service.price),
+            quantity_snapshot: partySize,
+            line_total_snapshot: lockedTotalPrice,
+            currency_snapshot: service.currency,
+            instructions_snapshot: service.instructions?.trim() || null,
+            sort_order: index,
+          }),
+        ),
+      });
+
+      const saved = await manager.getRepository(Booking).save(created);
+      return { booking: saved, created: true };
+    });
+    const booking = transactionResult.booking;
+
+    if (transactionResult.created && options.actorUserId) {
+      await this.auditService.log({
+        actor_user_id: options.actorUserId,
+        tenant_id: tenantId,
+        action: options.creationMode === 'MANUAL' ? 'BOOKING_MANUAL_CREATED' : 'BOOKING_CREATED',
+        entity: 'booking',
+        entity_id: booking.id,
+        metadata: {
+          employee_id: booking.employee_id,
+          service_ids: serviceIds,
+          start_at_utc: booking.start_at_utc.toISOString(),
+          end_at_utc: booking.end_at_utc.toISOString(),
+          status: booking.status,
+          source: booking.source,
+          creation_mode: options.creationMode,
+          allow_overlap: options.allowOverlap ?? false,
+          party_size: booking.party_size,
+        },
+      });
+    }
+
+    const hydratedBooking = await this.findOneByTenantId(booking.id, tenantId);
+
+    if (transactionResult.created && options.sendCreateNotifications) {
+      const sendNotificationsPromise = this.notificationsService.sendBookingLifecycleNotifications(
+        hydratedBooking,
+        'BOOKING_CREATED',
+        { managementToken: managementToken.token },
+      );
+
+      if (options.waitForCreateNotifications) {
+        await sendNotificationsPromise;
+      } else {
+        void sendNotificationsPromise;
+      }
+    }
+
+    return hydratedBooking;
+  }
+
+  private assertValidCreationStatus(
+    status: BookingStatus,
+    cancellationReason: string | null,
+  ): void {
+    if (!BOOKING_STATUSES.includes(status)) {
+      throw new BadRequestException('Estado de cita inválido');
+    }
+
+    if (this.isCancellationStatus(status) && !cancellationReason) {
+      throw new BadRequestException(
+        'Debes indicar el motivo al crear una cita cancelada o marcada como no asistida.',
+      );
+    }
+
+    if (!this.isCancellationStatus(status) && cancellationReason) {
+      throw new BadRequestException(
+        'El motivo de cancelación solo puede enviarse para citas canceladas o no asistidas',
+      );
+    }
+  }
+
+  private buildInitialLifecycleFields(
+    status: BookingStatus,
+    startAt: Date,
+    endAt: Date,
+    actorUserId: string | null,
+    cancellationReason: string | null,
+  ): Pick<
+    Booking,
+    | 'completed_at_utc'
+    | 'completed_by_user_id'
+    | 'cancelled_at_utc'
+    | 'cancelled_by_user_id'
+    | 'cancellation_reason'
+  > {
+    if (status === 'COMPLETED') {
+      return {
+        completed_at_utc: new Date(Math.min(Date.now(), endAt.getTime())),
+        completed_by_user_id: actorUserId,
+        cancelled_at_utc: null,
+        cancelled_by_user_id: null,
+        cancellation_reason: null,
+      };
+    }
+
+    if (this.isCancellationStatus(status)) {
+      return {
+        completed_at_utc: null,
+        completed_by_user_id: null,
+        cancelled_at_utc: new Date(Math.min(Date.now(), startAt.getTime())),
+        cancelled_by_user_id: actorUserId,
+        cancellation_reason: cancellationReason,
+      };
+    }
+
+    return {
+      completed_at_utc: null,
+      completed_by_user_id: null,
+      cancelled_at_utc: null,
+      cancelled_by_user_id: null,
+      cancellation_reason: null,
+    };
+  }
+
+  private shouldValidateManualAvailability(status: BookingStatus, endAt: Date): boolean {
+    return this.isBlockingStatus(status) && endAt.getTime() > Date.now();
+  }
+
+  private async assertManualBookingRangeAvailable(input: {
+    tenantId: string;
+    employeeId: string;
+    startAt: Date;
+    endAt: Date;
+    busyStartAt: Date;
+    busyEndAt: Date;
+    timezone: string;
+  }): Promise<void> {
+    const localDate = formatDateInTimeZone(input.startAt, input.timezone);
+    const localEndDate = formatDateInTimeZone(new Date(input.endAt.getTime() - 1), input.timezone);
+
+    if (localDate !== localEndDate) {
+      throw new ConflictException(
+        'Las citas manuales deben mantenerse dentro de un mismo día laboral local',
+      );
+    }
+
+    const dayOfWeek = getDayOfWeekFromDateString(localDate);
+    const [rules, breaks, timeOff] = await Promise.all([
+      this.scheduleRulesRepository.find({
+        where: {
+          tenant_id: input.tenantId,
+          employee_id: input.employeeId,
+          day_of_week: dayOfWeek,
+          is_active: true,
+        },
+        order: { start_time_local: 'ASC' },
+      }),
+      this.scheduleBreaksRepository.find({
+        where: {
+          tenant_id: input.tenantId,
+          employee_id: input.employeeId,
+          day_of_week: dayOfWeek,
+          is_active: true,
+        },
+        order: { start_time_local: 'ASC' },
+      }),
+      this.employeeTimeOffRepository.find({
+        where: {
+          tenant_id: input.tenantId,
+          employee_id: input.employeeId,
+          is_active: true,
+          start_at_utc: LessThan(input.busyEndAt),
+          end_at_utc: MoreThan(input.busyStartAt),
+        },
+      }),
+    ]);
+
+    if (rules.length === 0) {
+      throw new ConflictException(
+        'El horario seleccionado está fuera del horario laboral del profesional.',
+      );
+    }
+
+    const workIntervals = rules.map((rule) => ({
+      start: zonedDateTimeToUtc(
+        localDate,
+        this.normalizeLocalTime(rule.start_time_local),
+        input.timezone,
+      ),
+      end: zonedDateTimeToUtc(
+        localDate,
+        this.normalizeLocalTime(rule.end_time_local),
+        input.timezone,
+      ),
+    }));
+
+    const breakIntervals = breaks.map((brk) => ({
+      start: zonedDateTimeToUtc(
+        localDate,
+        this.normalizeLocalTime(brk.start_time_local),
+        input.timezone,
+      ),
+      end: zonedDateTimeToUtc(
+        localDate,
+        this.normalizeLocalTime(brk.end_time_local),
+        input.timezone,
+      ),
+    }));
+
+    const freeIntervals = subtractIntervals(workIntervals, [
+      ...breakIntervals,
+      ...timeOff.map((item) => ({
+        start: item.start_at_utc,
+        end: item.end_at_utc,
+      })),
+    ]);
+
+    const fits = freeIntervals.some(
+      (interval) =>
+        interval.start.getTime() <= input.busyStartAt.getTime() &&
+        interval.end.getTime() >= input.busyEndAt.getTime(),
+    );
+
+    if (!fits) {
+      throw new ConflictException(
+        'El horario seleccionado está fuera de la disponibilidad o se solapa con la agenda.',
+      );
+    }
+  }
+
+  private async computeAvailability(input: {
+    tenantId: string;
+    employeeId: string;
+    serviceIds: string[];
+    date: string;
+    timezone?: string;
+    partySize?: number;
+    excludeBookingId?: string;
+  }): Promise<{
+    employee_id: string;
+    date: string;
+    timezone: string;
+    slot_interval_minutes: number;
+    required_duration_minutes: number;
+    service_ids: string[];
+    slots: Array<{
+      start_at_utc: Date;
+      end_at_utc: Date;
+      slot_capacity: number;
+      occupied_capacity: number;
+      available_capacity: number;
+      requested_party_size: number;
+    }>;
+  }> {
+    const serviceIds = this.uniqueIds(input.serviceIds);
+    const selectedServices = await this.resolveActiveServices(input.tenantId, serviceIds);
+    const selectedService = selectedServices[0];
+    if (!selectedService) {
+      throw new BadRequestException('Debes seleccionar al menos un servicio');
+    }
+    const partySize = this.normalizePartySize(input.partySize);
+    this.assertPartySizeAllowed(selectedService, partySize);
+
+    const employee = await this.findTenantEmployee(input.employeeId, input.tenantId, true);
+    this.assertEmployeeOffersAllServices(employee, serviceIds);
+
+    const timezone = input.timezone?.trim() || employee.schedule_timezone || 'UTC';
+    this.assertValidTimezone(timezone);
+
+    const dayOfWeek = getDayOfWeekFromDateString(input.date);
+    const [rules, breaks] = await Promise.all([
+      this.scheduleRulesRepository.find({
+        where: {
+          tenant_id: input.tenantId,
+          employee_id: employee.id,
+          day_of_week: dayOfWeek,
+          is_active: true,
+        },
+        order: { start_time_local: 'ASC' },
+      }),
+      this.scheduleBreaksRepository.find({
+        where: {
+          tenant_id: input.tenantId,
+          employee_id: employee.id,
+          day_of_week: dayOfWeek,
+          is_active: true,
+        },
+        order: { start_time_local: 'ASC' },
+      }),
+    ]);
+
+    const totalDurationMinutes = this.getTotalDurationMinutes(selectedServices);
+    const bufferBeforeMinutes = this.getTotalBufferBeforeMinutes(selectedServices);
+    const bufferAfterMinutes = this.getTotalBufferAfterMinutes(selectedServices);
+    const occupiedDurationMinutes = bufferBeforeMinutes + totalDurationMinutes + bufferAfterMinutes;
+    // Slots are generated from requested service duration, not from per-employee configuration.
+    const slotIntervalMinutes = Math.max(totalDurationMinutes, 5);
+
+    if (rules.length === 0) {
+      return {
+        employee_id: employee.id,
+        date: input.date,
+        timezone,
+        slot_interval_minutes: slotIntervalMinutes,
+        required_duration_minutes: totalDurationMinutes,
+        service_ids: serviceIds,
+        slots: [],
+      };
+    }
+
+    const workIntervals = rules.map((rule) => ({
+      start: zonedDateTimeToUtc(
+        input.date,
+        this.normalizeLocalTime(rule.start_time_local),
+        timezone,
+      ),
+      end: zonedDateTimeToUtc(input.date, this.normalizeLocalTime(rule.end_time_local), timezone),
+    }));
+
+    const breakIntervals = breaks.map((brk) => ({
+      start: zonedDateTimeToUtc(
+        input.date,
+        this.normalizeLocalTime(brk.start_time_local),
+        timezone,
+      ),
+      end: zonedDateTimeToUtc(input.date, this.normalizeLocalTime(brk.end_time_local), timezone),
+    }));
+
+    const dayRange = getUtcRangeForLocalDate(input.date, timezone);
+
+    const [timeOff, activeBookings] = await Promise.all([
+      this.employeeTimeOffRepository.find({
+        where: {
+          tenant_id: input.tenantId,
+          employee_id: employee.id,
+          is_active: true,
+          start_at_utc: LessThan(dayRange.end),
+          end_at_utc: MoreThan(dayRange.start),
+        },
+      }),
+      this.bookingsRepository.find({
+        where: {
+          tenant_id: input.tenantId,
+          employee_id: employee.id,
+          status: In([...BOOKING_BLOCKING_STATUSES]),
+          busy_start_at_utc: LessThan(dayRange.end),
+          busy_end_at_utc: MoreThan(dayRange.start),
+        },
+        relations: {
+          items: true,
+        },
+      }),
+    ]);
+
+    const bookingCapacitySource = input.excludeBookingId
+      ? activeBookings.filter((booking) => booking.id !== input.excludeBookingId)
+      : activeBookings;
+    const selectedServiceId = selectedService.id;
+    const sameServiceBookings = bookingCapacitySource.filter((booking) =>
+      this.bookingIncludesService(booking, selectedServiceId),
+    );
+    const incompatibleBookings = bookingCapacitySource.filter(
+      (booking) => !this.bookingIncludesService(booking, selectedServiceId),
+    );
+    const busyIntervals = [
+      ...breakIntervals,
+      ...timeOff.map((item) => ({
+        start: item.start_at_utc,
+        end: item.end_at_utc,
+      })),
+      ...incompatibleBookings.map((item) => ({
+        start: item.busy_start_at_utc ?? item.start_at_utc,
+        end: item.busy_end_at_utc ?? item.end_at_utc,
+      })),
+    ];
+
+    const freeIntervals = subtractIntervals(workIntervals, busyIntervals);
+    const rawOccupiedSlots = generateSlots(
+      freeIntervals,
+      slotIntervalMinutes,
+      occupiedDurationMinutes,
+    );
+    const rawSlots = rawOccupiedSlots.map((slot) => ({
+      start_at_utc: new Date(slot.start_at_utc.getTime() + bufferBeforeMinutes * 60 * 1000),
+      end_at_utc: new Date(slot.end_at_utc.getTime() - bufferAfterMinutes * 60 * 1000),
+    }));
+
+    const minNoticeMinutes = selectedServices.reduce(
+      (maxNotice, service) => Math.max(maxNotice, service.min_notice_minutes),
+      0,
+    );
+    const maxBookingWindowDays = selectedServices.reduce(
+      (minWindow, service) => Math.min(minWindow, service.booking_window_days),
+      365,
+    );
+
+    const now = new Date();
+    const earliestAllowed = new Date(now.getTime() + minNoticeMinutes * 60 * 1000);
+    const latestAllowed = new Date(now.getTime() + maxBookingWindowDays * 24 * 60 * 60 * 1000);
+
+    const slotCapacity = this.getServiceSlotCapacity(selectedService);
+    const slots = rawSlots
+      .filter(
+        (slot) =>
+          slot.start_at_utc.getTime() >= earliestAllowed.getTime() &&
+          slot.start_at_utc.getTime() <= latestAllowed.getTime(),
+      )
+      .map((slot) => {
+        const occupiedCapacity = sameServiceBookings
+          .filter(
+            (booking) =>
+              booking.start_at_utc.getTime() === slot.start_at_utc.getTime() &&
+              booking.end_at_utc.getTime() === slot.end_at_utc.getTime(),
+          )
+          .reduce((sum, booking) => sum + (booking.party_size ?? 1), 0);
+        return {
+          ...slot,
+          slot_capacity: slotCapacity,
+          occupied_capacity: occupiedCapacity,
+          available_capacity: Math.max(slotCapacity - occupiedCapacity, 0),
+          requested_party_size: partySize,
+        };
+      })
+      .filter((slot) =>
+        this.hasCapacityForRequestedSlot({
+          bookings: sameServiceBookings,
+          serviceId: selectedServiceId,
+          partySize,
+          maxCapacity: slotCapacity,
+          startAt: new Date(slot.start_at_utc.getTime() - bufferBeforeMinutes * 60 * 1000),
+          endAt: new Date(slot.end_at_utc.getTime() + bufferAfterMinutes * 60 * 1000),
+          sessionStartAt: slot.start_at_utc,
+          sessionEndAt: slot.end_at_utc,
+        }),
+      );
+
+    return {
+      employee_id: employee.id,
+      date: input.date,
+      timezone,
+      slot_interval_minutes: slotIntervalMinutes,
+      required_duration_minutes: totalDurationMinutes,
+      service_ids: serviceIds,
+      slots,
+    };
+  }
+
+  private async getAvailabilityByTenantId(
+    tenantId: string,
+    query: AvailabilityQueryDto,
+  ): Promise<{
+    employee_id: string;
+    date: string;
+    timezone: string;
+    slot_interval_minutes: number;
+    required_duration_minutes: number;
+    service_ids: string[];
+    slots: Array<{
+      start_at_utc: string;
+      end_at_utc: string;
+      slot_capacity: number;
+      occupied_capacity: number;
+      available_capacity: number;
+      requested_party_size: number;
+    }>;
+  }> {
+    const availability = await this.computeAvailability({
+      tenantId,
+      employeeId: query.employee_id,
+      serviceIds: query.service_ids,
+      date: query.date,
+      timezone: query.timezone,
+      partySize: query.party_size,
+    });
+
+    return {
+      employee_id: availability.employee_id,
+      date: availability.date,
+      timezone: availability.timezone,
+      slot_interval_minutes: availability.slot_interval_minutes,
+      required_duration_minutes: availability.required_duration_minutes,
+      service_ids: availability.service_ids,
+      slots: availability.slots.map((slot) => ({
+        start_at_utc: slot.start_at_utc.toISOString(),
+        end_at_utc: slot.end_at_utc.toISOString(),
+        slot_capacity: slot.slot_capacity,
+        occupied_capacity: slot.occupied_capacity,
+        available_capacity: slot.available_capacity,
+        requested_party_size: slot.requested_party_size,
+      })),
+    };
+  }
+
+  private async findEligibleEmployeesByTenantId(
+    tenantId: string,
+    serviceIdsInput: string[],
+  ): Promise<Employee[]> {
+    const serviceIds = this.uniqueIds(serviceIdsInput);
+
+    await this.resolveActiveServices(tenantId, serviceIds);
+
+    const rawEligible = await this.employeesRepository
+      .createQueryBuilder('employee')
+      .innerJoin(
+        'employee.services',
+        'service',
+        'service.id IN (:...serviceIds) AND service.is_active = true',
+        { serviceIds },
+      )
+      .where('employee.tenant_id = :tenantId', { tenantId })
+      .andWhere('employee.is_active = true')
+      .select('employee.id', 'id')
+      .groupBy('employee.id')
+      .having('COUNT(DISTINCT service.id) = :serviceCount', {
+        serviceCount: serviceIds.length,
+      })
+      .getRawMany<{ id: string }>();
+
+    const eligibleIds = rawEligible.map((row) => row.id);
+    if (eligibleIds.length === 0) return [];
+
+    return this.employeesRepository.find({
+      where: {
+        tenant_id: tenantId,
+        id: In(eligibleIds),
+      },
+      order: {
+        name: 'ASC',
+      },
+    });
+  }
+
+  private normalizePartySize(value?: number): number {
+    const partySize = value ?? 1;
+    if (!Number.isInteger(partySize) || partySize < 1 || partySize > 100) {
+      throw new BadRequestException('El número de personas debe estar entre 1 y 100');
+    }
+    return partySize;
+  }
+
+  private getServiceMinCapacity(service: Service): number {
+    return service.min_party_size ?? service.min_capacity ?? 1;
+  }
+
+  private getServiceMaxCapacity(service: Service): number {
+    return service.max_party_size ?? service.max_capacity ?? 1;
+  }
+
+  private getServiceSlotCapacity(service: Service): number {
+    return service.slot_capacity ?? service.capacity ?? this.getServiceMaxCapacity(service);
+  }
+
+  private assertPartySizeAllowed(service: Service, partySize: number): void {
+    const minCapacity = this.getServiceMinCapacity(service);
+    const maxCapacity = this.getServiceMaxCapacity(service);
+
+    if (partySize < minCapacity || partySize > maxCapacity) {
+      throw new BadRequestException(
+        `Este servicio permite reservas entre ${minCapacity} y ${maxCapacity} persona(s).`,
+      );
+    }
+  }
+
+  private bookingIncludesService(booking: Booking, serviceId: string): boolean {
+    return booking.items?.some((item) => item.service_id === serviceId) ?? false;
+  }
+
+  private intervalsOverlap(left: Interval, right: Interval): boolean {
+    return left.start.getTime() < right.end.getTime() && left.end.getTime() > right.start.getTime();
+  }
+
+  private hasCapacityForRequestedSlot(input: {
+    bookings: Booking[];
+    serviceId: string;
+    partySize: number;
+    maxCapacity: number;
+    startAt: Date;
+    endAt: Date;
+    sessionStartAt: Date;
+    sessionEndAt: Date;
+    allowOverlap?: boolean;
+  }): boolean {
+    let usedCapacity = 0;
+
+    for (const booking of input.bookings) {
+      if (
+        !this.intervalsOverlap(
+          {
+            start: booking.busy_start_at_utc ?? booking.start_at_utc,
+            end: booking.busy_end_at_utc ?? booking.end_at_utc,
+          },
+          { start: input.startAt, end: input.endAt },
+        )
+      ) {
+        continue;
+      }
+
+      const sameService = this.bookingIncludesService(booking, input.serviceId);
+      const sameSession =
+        booking.start_at_utc.getTime() === input.sessionStartAt.getTime() &&
+        booking.end_at_utc.getTime() === input.sessionEndAt.getTime();
+
+      if (!sameService || !sameSession) {
+        if (input.allowOverlap) continue;
+        return false;
+      }
+
+      usedCapacity += booking.party_size ?? 1;
+      if (usedCapacity + input.partySize > input.maxCapacity) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private requireTenantId(currentUser: CurrentJwtUser): string {
+    if (!currentUser.tenant_id) {
+      throw new BadRequestException('El contexto del negocio es obligatorio.');
+    }
+    return currentUser.tenant_id;
+  }
+
+  private generateBookingManagementToken(referenceEndAt: Date): {
+    token: string;
+    hash: string;
+    expiresAt: Date;
+  } {
+    const token = randomBytes(32).toString('base64url');
+    const expiresAt = new Date(
+      Math.max(referenceEndAt.getTime(), Date.now()) + 30 * 24 * 60 * 60 * 1000,
+    );
+
+    return {
+      token,
+      hash: this.hashBookingManagementToken(token),
+      expiresAt,
+    };
+  }
+
+  private hashBookingManagementToken(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
+  }
+
+  private async findBookingByManagementToken(token: string): Promise<Booking> {
+    const normalizedToken = token.trim();
+    if (!/^[A-Za-z0-9_-]{32,256}$/.test(normalizedToken)) {
+      throw new NotFoundException('El enlace de gestión no es válido o expiró.');
+    }
+
+    const booking = await this.bookingsRepository.findOne({
+      where: {
+        management_token_hash: this.hashBookingManagementToken(normalizedToken),
+      },
+      relations: {
+        employee: true,
+        items: true,
+      },
+    });
+
+    if (
+      !booking ||
+      !booking.management_token_expires_at ||
+      booking.management_token_expires_at.getTime() <= Date.now()
+    ) {
+      throw new NotFoundException('El enlace de gestión no es válido o expiró.');
+    }
+
+    return booking;
+  }
+
+  private async findOneByTenantId(id: string, tenantId: string): Promise<Booking> {
+    const booking = await this.bookingsRepository.findOne({
+      where: {
+        id,
+        tenant_id: tenantId,
+      },
+      relations: {
+        employee: true,
+        items: true,
+      },
+    });
+
+    if (!booking) {
+      throw new NotFoundException('No se encontró la cita');
+    }
+
+    return booking;
+  }
+
+  private async findActiveTenantBySlug(tenantSlug: string): Promise<Tenant> {
+    const normalizedSlug = tenantSlug.trim().toLowerCase();
+    if (!normalizedSlug) {
+      throw new BadRequestException('El slug del negocio es obligatorio');
+    }
+
+    const tenant = await this.tenantsRepository.findOne({
+      where: { slug: normalizedSlug },
+    });
+
+    if (!tenant || !tenant.is_active) {
+      throw new NotFoundException('No se encontró el negocio');
+    }
+
+    return tenant;
+  }
+
+  private async findTenantEmployee(
+    employeeId: string,
+    tenantId: string,
+    withServices = false,
+  ): Promise<Employee> {
+    const employee = await this.employeesRepository.findOne({
+      where: {
+        id: employeeId,
+        tenant_id: tenantId,
+      },
+      relations: withServices ? { services: true } : undefined,
+    });
+
+    if (!employee) {
+      throw new NotFoundException('No se encontró el profesional');
+    }
+
+    return employee;
+  }
+
+  private async resolveActiveServices(tenantId: string, serviceIds: string[]): Promise<Service[]> {
+    const uniqueServiceIds = this.uniqueIds(serviceIds);
+    if (uniqueServiceIds.length === 0) {
+      throw new BadRequestException('Debes seleccionar al menos un servicio');
+    }
+
+    const services = await this.servicesRepository.find({
+      where: {
+        tenant_id: tenantId,
+        id: In(uniqueServiceIds),
+        is_active: true,
+      },
+      relations: { employees: false },
+    });
+
+    if (services.length !== uniqueServiceIds.length) {
+      throw new BadRequestException(
+        'Alguno de los servicios seleccionados no existe, está inactivo o no pertenece a este negocio.',
+      );
+    }
+
+    const map = new Map(services.map((service) => [service.id, service]));
+    return uniqueServiceIds.map((id) => map.get(id)!);
+  }
+
+  private assertEmployeeOffersAllServices(
+    employee: Employee & { services?: Service[] },
+    serviceIds: string[],
+  ): void {
+    const offeredIds = new Set((employee.services ?? []).map((service) => service.id));
+    const missing = serviceIds.filter((serviceId) => !offeredIds.has(serviceId));
+
+    if (missing.length > 0) {
+      throw new BadRequestException(
+        'El profesional seleccionado no ofrece todos los servicios solicitados.',
+      );
+    }
+  }
+
+  private assertValidTimezone(timezone: string): void {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(new Date());
+    } catch {
+      throw new BadRequestException('Zona horaria del horario inválida');
+    }
+  }
+
+  private ensureBreaksInsideWorkingHours(
+    workingHours: Array<{
+      day_of_week: number;
+      start_time_local: string;
+      end_time_local: string;
+    }>,
+    breaks: Array<{
+      day_of_week: number;
+      start_time_local: string;
+      end_time_local: string;
+    }>,
+  ): void {
+    for (const pause of breaks) {
+      const breakStart = parseTimeToMinutes(pause.start_time_local);
+      const breakEnd = parseTimeToMinutes(pause.end_time_local);
+
+      const insideWorkBlock = workingHours.some((work) => {
+        if (work.day_of_week !== pause.day_of_week) return false;
+        const workStart = parseTimeToMinutes(work.start_time_local);
+        const workEnd = parseTimeToMinutes(work.end_time_local);
+        return breakStart >= workStart && breakEnd <= workEnd;
+      });
+
+      if (!insideWorkBlock) {
+        throw new BadRequestException(
+          'Cada descanso debe estar completamente dentro de un bloque de horario laboral.',
+        );
+      }
+    }
+  }
+
+  private normalizePage(value?: number): number {
+    if (!value || Number.isNaN(value)) return 1;
+    return Math.max(1, Math.floor(value));
+  }
+
+  private normalizeLimit(value?: number): number {
+    if (!value || Number.isNaN(value)) return 25;
+    return Math.min(100, Math.max(10, Math.floor(value)));
+  }
+
+  private uniqueIds(ids: string[]): string[] {
+    return Array.from(new Set(ids));
+  }
+
+  private getTotalDurationMinutes(services: Service[]): number {
+    return services.reduce((total, service) => total + service.duration_minutes, 0);
+  }
+
+  private getTotalBufferBeforeMinutes(services: Service[]): number {
+    return services.reduce((total, service) => total + service.buffer_before_minutes, 0);
+  }
+
+  private getTotalBufferAfterMinutes(services: Service[]): number {
+    return services.reduce((total, service) => total + service.buffer_after_minutes, 0);
+  }
+
+  private normalizeLocalTime(value: string): string {
+    return value.trim().slice(0, 5);
+  }
+
+  private isCancellationStatus(status: string): status is 'CANCELLED' | 'NO_SHOW' {
+    return (BOOKING_CANCELLATION_STATUSES as readonly string[]).includes(status);
+  }
+
+  private isBlockingStatus(status: string): status is BookingStatus {
+    return (BOOKING_BLOCKING_STATUSES as readonly string[]).includes(status);
+  }
+
+  private formatBookingStatusLabel(status: string): string {
+    switch (status) {
+      case 'PENDING':
+        return 'pendiente';
+      case 'CONFIRMED':
+        return 'confirmada';
+      case 'IN_PROGRESS':
+        return 'en curso';
+      case 'COMPLETED':
+        return 'completada';
+      case 'CANCELLED':
+        return 'cancelada';
+      case 'NO_SHOW':
+        return 'no asistida';
+      default:
+        return status;
+    }
+  }
+
+  private toPublicBookingEmployee(
+    employee: Employee,
+    workingDays?: number[],
+  ): PublicBookingEmployee {
+    return {
+      id: employee.id,
+      name: employee.name,
+      avatar_url: employee.avatar_url ?? null,
+      working_days: [...new Set(workingDays ?? [])].sort((a, b) => a - b),
+    };
+  }
+
+  private async buildPublicEmployeeWorkingDaysMap(
+    tenantId: string,
+    employeeIds: string[],
+  ): Promise<Map<string, number[]>> {
+    const uniqueEmployeeIds = this.uniqueIds(employeeIds);
+    const result = new Map<string, number[]>();
+
+    if (uniqueEmployeeIds.length === 0) {
+      return result;
+    }
+
+    const rules = await this.scheduleRulesRepository.find({
+      where: {
+        tenant_id: tenantId,
+        employee_id: In(uniqueEmployeeIds),
+        is_active: true,
+      },
+      select: {
+        employee_id: true,
+        day_of_week: true,
+      },
+      order: {
+        employee_id: 'ASC',
+        day_of_week: 'ASC',
+      },
+    });
+
+    for (const employeeId of uniqueEmployeeIds) {
+      result.set(employeeId, []);
+    }
+
+    for (const rule of rules) {
+      const existingDays = result.get(rule.employee_id) ?? [];
+      if (!existingDays.includes(rule.day_of_week)) {
+        existingDays.push(rule.day_of_week);
+        result.set(rule.employee_id, existingDays);
+      }
+    }
+
+    return result;
+  }
+
+  private toPublicBookingConfirmation(booking: Booking): PublicBookingConfirmation {
+    return {
+      id: booking.id,
+      status: booking.status,
+      start_at_utc: booking.start_at_utc.toISOString(),
+      end_at_utc: booking.end_at_utc.toISOString(),
+      total_duration_minutes: booking.total_duration_minutes,
+      party_size: booking.party_size,
+      total_price: Number(booking.total_price).toFixed(2),
+      currency: booking.currency,
+      customer_name: booking.customer_name,
+      employee: booking.employee ? this.toPublicBookingEmployee(booking.employee) : null,
+      items: booking.items.map((item) => ({
+        id: item.id,
+        service_id: item.service_id,
+        service_name_snapshot: item.service_name_snapshot,
+        duration_minutes_snapshot: item.duration_minutes_snapshot,
+        price_snapshot: Number(item.price_snapshot).toFixed(2),
+        pricing_model_snapshot: item.pricing_model_snapshot,
+        unit_price_snapshot: normalizeMoney(item.unit_price_snapshot),
+        quantity_snapshot: item.quantity_snapshot,
+        line_total_snapshot: normalizeMoney(item.line_total_snapshot),
+        currency_snapshot: item.currency_snapshot,
+        instructions_snapshot: item.instructions_snapshot,
+        sort_order: item.sort_order,
+      })),
+    };
+  }
+
+  private toPublicBookingManagement(booking: Booking): PublicBookingManagement {
+    return {
+      ...this.toPublicBookingConfirmation(booking),
+      can_reschedule: ['PENDING', 'CONFIRMED'].includes(booking.status),
+    };
+  }
+}

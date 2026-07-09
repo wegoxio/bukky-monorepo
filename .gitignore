@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+
+# Runtime/cache
+.turbo/
+.cache/
+.eslintcache
+
+# Local automation/runtime folders
+.agents/
+.codex/
+
+BRIEF_TECNICO_WEEGOX_BOOKING.md

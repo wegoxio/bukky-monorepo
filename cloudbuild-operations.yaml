@@ -1,0 +1,39 @@
+substitutions:
+  _REGION: us-central1
+  _ARTIFACT_REPOSITORY: bukky
+  _IMAGE_NAME: bukky-backend-ops
+  _GIT_SHA: manual
+
+steps:
+  - name: node:22-bookworm-slim
+    id: Backend checks
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        corepack enable
+        corepack prepare pnpm@10.17.1 --activate
+        pnpm install --frozen-lockfile --filter booking-system...
+        pnpm --filter booking-system test:ci -- super-admin.seed.spec.ts
+        pnpm --filter booking-system build
+
+  - name: gcr.io/cloud-builders/docker
+    id: Build operations image
+    args:
+      - build
+      - --file
+      - booking-system-backend/Dockerfile
+      - --target
+      - operations
+      - --tag
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/${_IMAGE_NAME}:${_GIT_SHA}
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    id: Push operations image
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/${_IMAGE_NAME}:${_GIT_SHA}
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/${_IMAGE_NAME}:${_GIT_SHA}

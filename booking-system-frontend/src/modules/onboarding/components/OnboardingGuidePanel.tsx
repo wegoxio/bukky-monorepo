@@ -168,9 +168,13 @@ export default function OnboardingGuidePanel() {
         nextBtnText: 'Siguiente',
         prevBtnText: 'Anterior',
         doneBtnText: 'Completar',
-        onDoneClick: (_element, _step, options) => {
-          completedByDoneButton = true;
-          options.driver.destroy();
+        onPopoverRender: (popover, options) => {
+          const isLastStep = options.state.activeIndex === availableSteps.length - 1;
+          popover.nextButton.onclick = () => {
+            if (isLastStep) {
+              completedByDoneButton = true;
+            }
+          };
         },
         onDestroyed: () => {
           const completedModule = runningModuleRef.current;

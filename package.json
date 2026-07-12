@@ -14,6 +14,16 @@
     "typecheck": "pnpm -r --if-present typecheck"
   },
   "pnpm": {
+    "onlyBuiltDependencies": [
+      "argon2"
+    ],
+    "ignoredBuiltDependencies": [
+      "@scarf/scarf",
+      "@sentry/cli",
+      "esbuild",
+      "sharp",
+      "unrs-resolver"
+    ],
     "overrides": {
       "multer": "2.2.0",
       "typeorm": "0.3.29",

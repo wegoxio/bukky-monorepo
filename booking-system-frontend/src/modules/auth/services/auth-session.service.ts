@@ -1,6 +1,6 @@
 let inMemoryAccessToken: string | null = null;
 const tokenListeners = new Set<(token: string | null) => void>();
-const CSRF_COOKIE_NAME = process.env.NEXT_PUBLIC_AUTH_CSRF_COOKIE_NAME ?? 'bukky_csrf';
+const CSRF_COOKIE_NAME = process.env.NEXT_PUBLIC_AUTH_CSRF_COOKIE_NAME?.trim() || 'bukky_csrf';
 const CSRF_STORAGE_KEY = `${CSRF_COOKIE_NAME}_current`;
 
 function notifyTokenChange(nextToken: string | null): void {
@@ -49,17 +49,26 @@ export function getCsrfTokenFromCookie(): string | null {
 
   const cookies = document.cookie ? document.cookie.split(';') : [];
   let matchedToken: string | null = null;
+  const encodedCookieName = encodeURIComponent(CSRF_COOKIE_NAME);
 
   for (const cookie of cookies) {
     const [rawName, ...rawValueParts] = cookie.trim().split('=');
-    if (rawName !== CSRF_COOKIE_NAME) continue;
+    if (rawName !== CSRF_COOKIE_NAME && rawName !== encodedCookieName) continue;
 
     const rawValue = rawValueParts.join('=');
-    const decoded = decodeURIComponent(rawValue).trim();
+    const decoded = safeDecodeCookieValue(rawValue).trim();
     matchedToken = decoded || null;
   }
 
   return matchedToken;
+}
+
+function safeDecodeCookieValue(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 export function syncCsrfTokenFromCookie(): string | null {

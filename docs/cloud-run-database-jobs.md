@@ -49,12 +49,12 @@ pnpm 10 bloquea scripts de instalacion si no estan aprobados.
 Este repo aprueba solo:
 
 - `argon2`: requerido por autenticacion y por `seed:superadmin` para crear el hash inicial de password.
+- `esbuild`: requerido por Vitest/tooling del frontend dentro del monorepo. No es requerido por la imagen operations, pero bloquearlo rompe las pruebas frontend.
 
 Este repo ignora explicitamente:
 
 - `@scarf/scarf`: telemetria de dependencia, no requerida por runtime.
 - `@sentry/cli`: util para sourcemaps, no requerido para migraciones o seeds.
-- `esbuild`: no requerido para ejecutar migraciones TypeORM con `ts-node`.
 - `sharp`: dependencia de frontend/imagenes, no requerida por la imagen operations.
 - `unrs-resolver`: dependencia de tooling/lint, no requerida por operations.
 

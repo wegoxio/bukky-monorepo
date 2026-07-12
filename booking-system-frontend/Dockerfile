@@ -8,19 +8,19 @@ RUN corepack enable
 WORKDIR /app
 
 
-# Instala las dependencias necesarias para compilar Next.js
+# Instala el workspace completo.
+# El contexto Docker debe ser la raíz del monorepo.
 FROM base AS dependencies
 
-COPY package.json pnpm-lock.yaml ./
+COPY . .
 
 RUN pnpm install --frozen-lockfile
 
 
-# Compila el frontend
-FROM base AS builder
+# Compila únicamente el frontend.
+FROM dependencies AS builder
 
-COPY --from=dependencies /app/node_modules ./node_modules
-COPY . .
+WORKDIR /app/booking-system-frontend
 
 RUN mkdir -p public
 
@@ -30,15 +30,16 @@ ARG NEXT_PUBLIC_APP_DOMAIN
 ARG NEXT_PUBLIC_TURNSTILE_SITE_KEY
 ARG NEXT_PUBLIC_SENTRY_RELEASE=local
 
-# Valores públicos estables de tu .env.example
-ARG NEXT_PUBLIC_AUTH_CSRF_COOKIE_NAME=wegox_csrf
+# Configuración pública de autenticación y CSRF
+ARG NEXT_PUBLIC_AUTH_CSRF_COOKIE_NAME=bukky_csrf
 ARG NEXT_PUBLIC_AUTH_CSRF_HEADER_NAME=x-csrf-token
 
+# Acciones públicas de Turnstile
 ARG NEXT_PUBLIC_TURNSTILE_LOGIN_ACTION=login
 ARG NEXT_PUBLIC_TURNSTILE_BOOKING_ACTION=booking_create
 ARG NEXT_PUBLIC_TURNSTILE_RESCHEDULE_ACTION=booking_reschedule
 
-# Sentry desactivado en el primer despliegue
+# Sentry
 ARG NEXT_PUBLIC_SENTRY_ENABLED=false
 ARG NEXT_PUBLIC_SENTRY_DSN=
 ARG NEXT_PUBLIC_SENTRY_ENVIRONMENT=production
@@ -69,6 +70,22 @@ ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN pnpm run build
 
+# Comprueba que Next.js generó el standalone y prepara los assets
+# junto al server.js, independientemente de si quedó anidado
+# por la estructura del monorepo.
+RUN set -eux; \
+    echo "Contenido standalone generado:"; \
+    find .next/standalone -maxdepth 6 -type f -name "server.js" -print; \
+    SERVER_FILE="$(find .next/standalone -type f -name "server.js" -print -quit)"; \
+    test -n "$SERVER_FILE"; \
+    SERVER_DIR="$(dirname "$SERVER_FILE")"; \
+    mkdir -p "$SERVER_DIR/.next"; \
+    cp -r public "$SERVER_DIR/public"; \
+    cp -r .next/static "$SERVER_DIR/.next/static"; \
+    SERVER_RELATIVE_PATH="${SERVER_FILE#.next/standalone/}"; \
+    printf '%s' "$SERVER_RELATIVE_PATH" > .next/standalone/server-path.txt; \
+    echo "Servidor seleccionado: $SERVER_RELATIVE_PATH"
+
 
 # Imagen final de producción
 FROM node:22-bookworm-slim AS runner
@@ -83,16 +100,14 @@ ENV PORT=8080
 RUN addgroup --system --gid 1001 nodejs \
     && adduser --system --uid 1001 --ingroup nodejs nextjs
 
-COPY --from=builder /app/public ./public
-
+# Copia toda la estructura standalone.
+# Esto conserva node_modules y cualquier estructura anidada del monorepo.
 COPY --from=builder --chown=nextjs:nodejs \
-    /app/.next/standalone ./
-
-COPY --from=builder --chown=nextjs:nodejs \
-    /app/.next/static ./.next/static
+    /app/booking-system-frontend/.next/standalone \
+    ./
 
 USER nextjs
 
 EXPOSE 8080
 
-CMD ["node", "server.js"]
+CMD ["sh", "-c", "exec node \"$(cat /app/server-path.txt)\""]

@@ -109,19 +109,22 @@ function Add-NetworkArgs($Args, $Annotations) {
 
 function Upsert-Job($JobName, [string[]] $CommandArgs, [string[]] $PlainEnv, [string[]] $SecretEnv, $Annotations) {
   $exists = $false
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
   & gcloud run jobs describe $JobName --project $ProjectId --region $Region *> $null
   if ($LASTEXITCODE -eq 0) {
     $exists = $true
   }
+  $ErrorActionPreference = $previousErrorActionPreference
 
   $args = New-Object System.Collections.Generic.List[string]
   if ($exists) {
-    $args.AddRange(@('run', 'jobs', 'update', $JobName))
+    $args.AddRange([string[]] @('run', 'jobs', 'update', $JobName))
   } else {
-    $args.AddRange(@('run', 'jobs', 'create', $JobName))
+    $args.AddRange([string[]] @('run', 'jobs', 'create', $JobName))
   }
 
-  $args.AddRange(@(
+  $args.AddRange([string[]] @(
       '--project', $ProjectId,
       '--region', $Region,
       '--image', $ImageUri,

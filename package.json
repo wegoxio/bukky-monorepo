@@ -15,12 +15,12 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "argon2"
+      "argon2",
+      "esbuild"
     ],
     "ignoredBuiltDependencies": [
       "@scarf/scarf",
       "@sentry/cli",
-      "esbuild",
       "sharp",
       "unrs-resolver"
     ],

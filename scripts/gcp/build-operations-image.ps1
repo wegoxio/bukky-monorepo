@@ -16,17 +16,17 @@ function Assert-Command($Name) {
 Assert-Command gcloud
 Assert-Command git
 
-$activeProject = (& gcloud config get-value project 2>$null).Trim()
+$activeProject = ((& gcloud config get-value project 2>$null) -join '').Trim()
 if ($activeProject -ne $ProjectId) {
   throw "Proyecto activo incorrecto. Esperado: $ProjectId. Actual: $activeProject"
 }
 
-$shortSha = (& git rev-parse --short=12 HEAD).Trim()
+$shortSha = ((& git rev-parse --short=12 HEAD) -join '').Trim()
 if (-not $shortSha) {
   throw 'No se pudo resolver el hash corto de git.'
 }
 
-$dirty = (& git status --porcelain).Trim()
+$dirty = ((& git status --porcelain) -join [Environment]::NewLine).Trim()
 if ($dirty) {
   throw 'El worktree tiene cambios sin commit. Para que el tag de imagen corresponda al hash, commitea los cambios o usa un commit limpio antes de publicar.'
 }

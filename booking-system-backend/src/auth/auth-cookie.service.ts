@@ -13,6 +13,7 @@ export class AuthCookieService {
   private readonly refreshCookieSameSite: RefreshCookieSameSite;
   private readonly refreshCookieSecure: boolean;
   private readonly csrfCookieName: string;
+  private readonly csrfCookieDomain: string | undefined;
   private readonly csrfCookiePath: string;
   private readonly csrfHeaderName: string;
 
@@ -28,17 +29,21 @@ export class AuthCookieService {
       this.configService.get<string>('AUTH_REFRESH_COOKIE_PATH', '/api/auth'),
     );
 
-    const configuredDomain = this.configService.get<string>('AUTH_REFRESH_COOKIE_DOMAIN')?.trim();
-    this.refreshCookieDomain = configuredDomain ? configuredDomain : undefined;
+    this.refreshCookieDomain = this.normalizeOptionalString(
+      this.configService.get<string>('AUTH_REFRESH_COOKIE_DOMAIN'),
+    );
 
     this.refreshCookieSameSite =
       this.configService.get<RefreshCookieSameSite | undefined>(
         'AUTH_REFRESH_COOKIE_SAME_SITE',
         undefined,
-      ) ?? (isProduction ? 'none' : 'lax');
+      ) ?? 'lax';
     this.refreshCookieSecure = this.resolveCookieSecureValue(isProduction);
 
     this.csrfCookieName = this.configService.get<string>('AUTH_CSRF_COOKIE_NAME', 'bukky_csrf');
+    this.csrfCookieDomain = this.normalizeOptionalString(
+      this.configService.get<string>('AUTH_CSRF_COOKIE_DOMAIN'),
+    );
     this.csrfCookiePath = this.normalizeCookiePath(
       this.configService.get<string>('AUTH_CSRF_COOKIE_PATH', '/'),
     );
@@ -105,7 +110,7 @@ export class AuthCookieService {
       secure: this.refreshCookieSecure,
       sameSite: this.refreshCookieSameSite,
       path: this.csrfCookiePath,
-      ...(this.refreshCookieDomain ? { domain: this.refreshCookieDomain } : {}),
+      ...(this.csrfCookieDomain ? { domain: this.csrfCookieDomain } : {}),
       expires: refreshExpiresAt,
     });
   }
@@ -165,7 +170,8 @@ export class AuthCookieService {
       }
     }
 
-    const parsedCookieValue = req.cookies?.[cookieName];
+    const cookies = req.cookies as Record<string, unknown> | undefined;
+    const parsedCookieValue = cookies?.[cookieName];
     if (typeof parsedCookieValue === 'string') {
       const normalized = parsedCookieValue.trim();
       if (normalized.length > 0) {
@@ -200,16 +206,33 @@ export class AuthCookieService {
 
   private clearCsrfCookieAcrossKnownPaths(response: Response): void {
     const paths = this.collectCookiePaths(this.csrfCookiePath, ['/', '/api', '/api/auth']);
+    const domains = this.collectCookieDomains(this.csrfCookieDomain, [this.refreshCookieDomain]);
 
     for (const path of paths) {
-      response.clearCookie(this.csrfCookieName, {
-        httpOnly: false,
-        secure: this.refreshCookieSecure,
-        sameSite: this.refreshCookieSameSite,
-        path,
-        ...(this.refreshCookieDomain ? { domain: this.refreshCookieDomain } : {}),
-      });
+      for (const domain of domains) {
+        response.clearCookie(this.csrfCookieName, {
+          httpOnly: false,
+          secure: this.refreshCookieSecure,
+          sameSite: this.refreshCookieSameSite,
+          path,
+          ...(domain ? { domain } : {}),
+        });
+      }
     }
+  }
+
+  private collectCookieDomains(
+    primaryDomain: string | undefined,
+    legacyDomains: Array<string | undefined>,
+  ): Array<string | undefined> {
+    const uniqueDomains = new Set<string | undefined>();
+    uniqueDomains.add(primaryDomain);
+
+    for (const domain of legacyDomains) {
+      uniqueDomains.add(domain);
+    }
+
+    return Array.from(uniqueDomains);
   }
 
   private collectCookiePaths(primaryPath: string, legacyPaths: string[]): string[] {
@@ -233,5 +256,10 @@ export class AuthCookieService {
     }
 
     return prefixed;
+  }
+
+  private normalizeOptionalString(value: string | undefined): string | undefined {
+    const normalized = value?.trim();
+    return normalized ? normalized : undefined;
   }
 }

@@ -1,0 +1,19 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'Build backend image'
+    args:
+      - 'build'
+      - '--file'
+      - 'booking-system-backend/Dockerfile'
+      - '--tag'
+      - '${_IMAGE_URI}'
+      - '.'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'Push backend image'
+    args:
+      - 'push'
+      - '${_IMAGE_URI}'
+
+images:
+  - '${_IMAGE_URI}'

@@ -110,6 +110,7 @@ export const envSchema = z
     ),
     AUTH_REFRESH_COOKIE_SECURE: z.preprocess(parseOptionalBoolean, z.boolean().optional()),
     AUTH_CSRF_COOKIE_NAME: z.string().min(1).default('bukky_csrf'),
+    AUTH_CSRF_COOKIE_DOMAIN: z.preprocess(parseOptionalString, z.string().min(1).optional()),
     AUTH_CSRF_COOKIE_PATH: z.string().min(1).default('/'),
     AUTH_CSRF_HEADER_NAME: z.string().min(1).default('x-csrf-token'),
     TURNSTILE_ENABLED: z.coerce.boolean().default(false),

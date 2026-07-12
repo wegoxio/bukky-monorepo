@@ -11,6 +11,8 @@ function normalizeOrigin(origin: string): string {
   return origin.trim().replace(/\/+$/, '');
 }
 
+const PORT = Number(process.env.PORT ?? 8080);
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
@@ -93,6 +95,6 @@ async function bootstrap() {
 
   setupSwagger(app);
 
-  await app.listen(process.env.PORT ?? 3000);
+  await app.listen(PORT, '0.0.0.0');
 }
 bootstrap();

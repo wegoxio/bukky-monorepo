@@ -1,6 +1,7 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
+  output: 'standalone',
   images: {
     remotePatterns: [
       {
@@ -44,9 +45,7 @@ const nextConfig: NextConfig = {
 };
 
 const isSentryConfigEnabled =
-  process.env.NEXT_PUBLIC_SENTRY_ENABLED === 'true' ||
-  Boolean(process.env.SENTRY_AUTH_TOKEN) ||
-  Boolean(process.env.CI);
+  process.env.NEXT_PUBLIC_SENTRY_ENABLED === 'true' || Boolean(process.env.SENTRY_AUTH_TOKEN);
 
 export default async function getNextConfig() {
   if (!isSentryConfigEnabled) {

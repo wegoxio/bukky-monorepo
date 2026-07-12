@@ -1,0 +1,31 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'Build frontend image'
+    args:
+      - 'build'
+
+      - '--build-arg'
+      - 'NEXT_PUBLIC_API_URL=${_NEXT_PUBLIC_API_URL}'
+
+      - '--build-arg'
+      - 'NEXT_PUBLIC_APP_DOMAIN=${_NEXT_PUBLIC_APP_DOMAIN}'
+
+      - '--build-arg'
+      - 'NEXT_PUBLIC_TURNSTILE_SITE_KEY=${_NEXT_PUBLIC_TURNSTILE_SITE_KEY}'
+
+      - '--build-arg'
+      - 'NEXT_PUBLIC_SENTRY_RELEASE=${_NEXT_PUBLIC_SENTRY_RELEASE}'
+
+      - '--tag'
+      - '${_IMAGE_URI}'
+
+      - '.'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'Push frontend image'
+    args:
+      - 'push'
+      - '${_IMAGE_URI}'
+
+images:
+  - '${_IMAGE_URI}'

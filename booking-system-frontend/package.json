@@ -2,8 +2,9 @@
   "name": "booking-system-frontend",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@10.17.1",
   "scripts": {
-    "dev": "next dev --webpack",
+    "dev": "next dev",
     "dev:webpack": "next dev --webpack",
     "dev:turbo": "next dev --turbo",
     "build": "next build",
@@ -43,5 +44,10 @@
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^3.2.4"
+  },
+  "pnpm": {
+    "overrides": {
+      "postcss": "8.5.15"
+    }
   }
 }

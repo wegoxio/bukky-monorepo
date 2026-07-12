@@ -111,5 +111,21 @@
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
+  },
+  "pnpm": {
+    "overrides": {
+      "multer": "2.2.0",
+      "typeorm": "0.3.29",
+      "path-to-regexp": "8.4.0",
+      "qs": "6.15.2",
+      "fast-xml-parser": "5.7.0",
+      "fast-xml-builder": "1.1.7",
+      "lodash": "4.18.0",
+      "tmp": "0.2.7",
+      "file-type": "21.3.2",
+      "brace-expansion@<2.0.0": "1.1.13",
+      "brace-expansion@>=2.0.0 <3.0.0": "2.0.3",
+      "uuid": "11.1.1"
+    }
   }
 }

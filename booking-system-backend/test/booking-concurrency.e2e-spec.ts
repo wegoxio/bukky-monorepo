@@ -7,13 +7,16 @@ import { Booking } from '../src/bookings/entities/booking.entity';
 import { EmployeeScheduleRule } from '../src/bookings/entities/employee-schedule-rule.entity';
 import { EmployeeScheduleBreak } from '../src/bookings/entities/employee-schedule-break.entity';
 import { EmployeeTimeOff } from '../src/bookings/entities/employee-time-off.entity';
+import { BookingItem } from '../src/bookings/entities/booking-item.entity';
 import { BookingsService } from '../src/bookings/bookings.service';
+import { User } from '../src/users/entities/user.entity';
 
 const describeDb = process.env.RUN_DB_INTEGRATION === 'true' ? describe : describe.skip;
 
 describeDb('Booking capacity concurrency (PostgreSQL)', () => {
   let tenant: Tenant;
   let employee: Employee;
+  let user: User;
   let serviceEntity: Service;
   let bookingsService: BookingsService;
 
@@ -22,6 +25,7 @@ describeDb('Booking capacity concurrency (PostgreSQL)', () => {
     const tenantRepo = AppDataSource.getRepository(Tenant);
     const employeeRepo = AppDataSource.getRepository(Employee);
     const serviceRepo = AppDataSource.getRepository(Service);
+    const userRepo = AppDataSource.getRepository(User);
 
     tenant = await tenantRepo.save(
       tenantRepo.create({
@@ -44,6 +48,30 @@ describeDb('Booking capacity concurrency (PostgreSQL)', () => {
         schedule_timezone: 'UTC',
         slot_interval_minutes: 15,
         is_active: true,
+      }),
+    );
+    user = await userRepo.save(
+      userRepo.create({
+        tenant_id: tenant.id,
+        name: 'Concurrent Admin',
+        email: `${randomUUID()}@admin.test.local`,
+        password_hash: null,
+        role: 'TENANT_ADMIN',
+        is_active: true,
+        email_verified_at: new Date(),
+        invited_at: null,
+        onboarding_completed_at: null,
+        token_version: 0,
+        failed_login_attempts: 0,
+        last_failed_login_at: null,
+        locked_until: null,
+        last_login_at: null,
+        mfa_enabled_at: null,
+        mfa_totp_secret_encrypted: null,
+        mfa_recovery_code_hashes: null,
+        mfa_pending_secret_encrypted: null,
+        mfa_pending_expires_at: null,
+        mfa_last_used_at: null,
       }),
     );
     serviceEntity = serviceRepo.create({
@@ -87,7 +115,25 @@ describeDb('Booking capacity concurrency (PostgreSQL)', () => {
   });
 
   afterAll(async () => {
-    if (tenant) await AppDataSource.getRepository(Tenant).delete(tenant.id);
+    if (tenant) {
+      const bookingIds = (
+        await AppDataSource.getRepository(Booking).find({
+          where: { tenant_id: tenant.id },
+          select: { id: true },
+        })
+      ).map((booking) => booking.id);
+
+      if (bookingIds.length > 0) {
+        await AppDataSource.getRepository(BookingItem)
+          .createQueryBuilder()
+          .delete()
+          .where('booking_id IN (:...bookingIds)', { bookingIds })
+          .execute();
+        await AppDataSource.getRepository(Booking).delete(bookingIds);
+      }
+
+      await AppDataSource.getRepository(Tenant).delete(tenant.id);
+    }
     if (AppDataSource.isInitialized) await AppDataSource.destroy();
   });
 
@@ -102,7 +148,7 @@ describeDb('Booking capacity concurrency (PostgreSQL)', () => {
           customer_name: name,
           allow_overlap: true,
         },
-        { sub: randomUUID(), role: 'TENANT_ADMIN', tenant_id: tenant.id },
+        { sub: user.id, role: 'TENANT_ADMIN', tenant_id: tenant.id },
       );
 
     const results = await Promise.allSettled([command('A'), command('B')]);

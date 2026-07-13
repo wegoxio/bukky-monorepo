@@ -19,6 +19,7 @@ import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { SentryGlobalFilter, SentryModule } from '@sentry/nestjs/setup';
 import { HttpPerformanceInterceptor } from './common/performance/http-performance.interceptor';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { HttpPerformanceInterceptor } from './common/performance/http-performanc
     RemindersModule,
     ReportsModule,
     TenantSettingsModule,
+    HealthModule,
     SentryModule.forRoot(),
     ScheduleModule.forRoot(),
     ConfigModule.forRoot({

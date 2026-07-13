@@ -227,31 +227,26 @@ NEXT_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE=0.1
 
 ## CI/CD
 
+Estado actual:
+
+- `.github/workflows/pull-request-validation.yml` valida PR hacia `develop` y `main`.
+- `.github/workflows/deploy-production.yml` despliega producción solo desde `main`.
+- `develop` no despliega.
+- El único check obligatorio en GitHub debe ser `CI Required`.
+- El deploy usa Google Cloud Workload Identity Federation, Cloud Build y Cloud Run.
+- El deploy ya no usa Vercel ni claves JSON.
+
+Guía completa:
+
+```text
+docs/ci-cd-github-google-cloud.md
+```
+
 GitHub Actions usa:
 
-- `.github/workflows/ci.yml` para PR hacia `develop` y `main`.
-- `.github/workflows/staging.yml` para push a `develop`.
-- `.github/workflows/production.yml` para push a `main`.
+- Ver guía completa anterior. Esta sección histórica se mantiene solo como referencia de comandos locales.
 
-Secrets esperados para deploy Vercel:
-
-```text
-VERCEL_TOKEN
-VERCEL_ORG_ID
-VERCEL_FRONTEND_PROJECT_ID
-VERCEL_BACKEND_PROJECT_ID
-```
-
-Variables opcionales para smoke tests:
-
-```text
-STAGING_FRONTEND_URL
-STAGING_BACKEND_HEALTH_URL
-PRODUCTION_FRONTEND_URL
-PRODUCTION_BACKEND_HEALTH_URL
-```
-
-Si los secrets de Vercel no están configurados, los workflows dejan pasar los quality gates y omiten deploy.
+Variables de producción se documentan en `docs/ci-cd-github-google-cloud.md`.
 
 ## Performance local
 

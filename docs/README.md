@@ -20,11 +20,13 @@ docs/
     006-performance-baseline-and-rate-limit.md
     007-admin-ux-and-calendar.md
     008-monorepo-quality-gates.md
+    009-github-actions-cloud-build-cicd.md
   api/
     endpoints.md
   setup/
     local-development.md
     aws-s3-public-assets.md
+  ci-cd-github-google-cloud.md
   performance/
     README.md
     baselines/

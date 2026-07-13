@@ -1,0 +1,221 @@
+name: Deploy Production
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+jobs:
+  validate-main:
+    name: Revalidate main
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: bukky_ci
+          POSTGRES_USER: bukky_ci
+          POSTGRES_PASSWORD: bukky_ci_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bukky_ci -d bukky_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      NODE_ENV: test
+      APP_PUBLIC_URL: http://localhost:3000
+      CORS_ORIGINS: http://localhost:3000
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_USER: bukky_ci
+      DB_PASSWORD: bukky_ci_password
+      DB_NAME: bukky_ci
+      DB_SSL: false
+      JWT_SECRET: ci-jwt-secret-with-minimum-length
+      JWT_REFRESH_SECRET: ci-refresh-secret-with-minimum-length
+      MFA_CHALLENGE_SECRET: ci-mfa-challenge-secret-with-minimum-length
+      TURNSTILE_ENABLED: false
+      RUN_DB_INTEGRATION: true
+      NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+      NEXT_PUBLIC_APP_DOMAIN: ${{ vars.NEXT_PUBLIC_APP_DOMAIN }}
+      NEXT_PUBLIC_AUTH_CSRF_COOKIE_NAME: ${{ vars.NEXT_PUBLIC_AUTH_CSRF_COOKIE_NAME }}
+      NEXT_PUBLIC_AUTH_CSRF_HEADER_NAME: ${{ vars.NEXT_PUBLIC_AUTH_CSRF_HEADER_NAME }}
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ vars.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
+      NEXT_PUBLIC_TURNSTILE_LOGIN_ACTION: ${{ vars.NEXT_PUBLIC_TURNSTILE_LOGIN_ACTION }}
+      NEXT_PUBLIC_TURNSTILE_BOOKING_ACTION: ${{ vars.NEXT_PUBLIC_TURNSTILE_BOOKING_ACTION }}
+      NEXT_PUBLIC_TURNSTILE_RESCHEDULE_ACTION: ${{ vars.NEXT_PUBLIC_TURNSTILE_RESCHEDULE_ACTION }}
+      NEXT_PUBLIC_SENTRY_ENABLED: ${{ vars.NEXT_PUBLIC_SENTRY_ENABLED }}
+      NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
+      NEXT_PUBLIC_SENTRY_ENVIRONMENT: ${{ vars.NEXT_PUBLIC_SENTRY_ENVIRONMENT }}
+      NEXT_PUBLIC_SENTRY_RELEASE: ${{ github.sha }}
+      NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE: ${{ vars.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE }}
+      NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE: ${{ vars.NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE }}
+      NEXT_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE: ${{ vars.NEXT_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE }}
+
+    steps:
+      - name: Ensure workflow_dispatch deploys main only
+        if: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' }}
+        run: |
+          echo "::error::Manual production deploys must be started from the main branch."
+          exit 1
+
+      - name: Checkout main commit
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Ensure checked out commit matches workflow SHA
+        if: ${{ github.event_name == 'push' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          checked_out_sha="$(git rev-parse HEAD)"
+          if [[ "$checked_out_sha" != "${{ github.sha }}" ]]; then
+            echo "::error::Checked out SHA does not match the workflow SHA."
+            exit 1
+          fi
+
+      - name: Setup monorepo
+        uses: ./.github/actions/setup-monorepo
+
+      - name: Check formatting
+        run: pnpm ci:format
+
+      - name: Lint
+        run: pnpm ci:lint
+
+      - name: Typecheck
+        run: pnpm ci:typecheck
+
+      - name: Unit tests
+        run: pnpm ci:test:unit
+
+      - name: Prepare integration database
+        working-directory: booking-system-backend
+        run: pnpm run migration:run
+
+      - name: Backend integration tests
+        run: pnpm ci:test:integration:backend
+
+      - name: Backend e2e tests
+        run: pnpm ci:test:e2e:backend
+
+      - name: Build
+        run: pnpm ci:build
+
+  deploy-production:
+    name: Cloud Build production deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: validate-main
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      GCP_CLOUD_BUILD_SERVICE_ACCOUNT: ${{ vars.GCP_CLOUD_BUILD_SERVICE_ACCOUNT }}
+      GCP_ARTIFACT_REPOSITORY: ${{ vars.GCP_ARTIFACT_REPOSITORY }}
+      GCP_BACKEND_SERVICE: ${{ vars.GCP_BACKEND_SERVICE }}
+      GCP_FRONTEND_SERVICE: ${{ vars.GCP_FRONTEND_SERVICE }}
+      GCP_MIGRATION_JOB: ${{ vars.GCP_MIGRATION_JOB }}
+      PRODUCTION_BACKEND_SMOKE_URL: ${{ vars.PRODUCTION_BACKEND_SMOKE_URL }}
+      PRODUCTION_FRONTEND_SMOKE_URL: ${{ vars.PRODUCTION_FRONTEND_SMOKE_URL }}
+      NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+      NEXT_PUBLIC_APP_DOMAIN: ${{ vars.NEXT_PUBLIC_APP_DOMAIN }}
+      NEXT_PUBLIC_AUTH_CSRF_COOKIE_NAME: ${{ vars.NEXT_PUBLIC_AUTH_CSRF_COOKIE_NAME }}
+      NEXT_PUBLIC_AUTH_CSRF_HEADER_NAME: ${{ vars.NEXT_PUBLIC_AUTH_CSRF_HEADER_NAME }}
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ vars.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
+      NEXT_PUBLIC_TURNSTILE_LOGIN_ACTION: ${{ vars.NEXT_PUBLIC_TURNSTILE_LOGIN_ACTION }}
+      NEXT_PUBLIC_TURNSTILE_BOOKING_ACTION: ${{ vars.NEXT_PUBLIC_TURNSTILE_BOOKING_ACTION }}
+      NEXT_PUBLIC_TURNSTILE_RESCHEDULE_ACTION: ${{ vars.NEXT_PUBLIC_TURNSTILE_RESCHEDULE_ACTION }}
+      NEXT_PUBLIC_SENTRY_ENABLED: ${{ vars.NEXT_PUBLIC_SENTRY_ENABLED }}
+      NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
+      NEXT_PUBLIC_SENTRY_ENVIRONMENT: ${{ vars.NEXT_PUBLIC_SENTRY_ENVIRONMENT }}
+      NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE: ${{ vars.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE }}
+      NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE: ${{ vars.NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE }}
+      NEXT_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE: ${{ vars.NEXT_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE }}
+
+    steps:
+      - name: Checkout main commit
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Validate required GitHub variables
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            GCP_PROJECT_ID
+            GCP_REGION
+            GCP_WORKLOAD_IDENTITY_PROVIDER
+            GCP_DEPLOY_SERVICE_ACCOUNT
+            GCP_CLOUD_BUILD_SERVICE_ACCOUNT
+            GCP_ARTIFACT_REPOSITORY
+            GCP_BACKEND_SERVICE
+            GCP_FRONTEND_SERVICE
+            GCP_MIGRATION_JOB
+            NEXT_PUBLIC_API_URL
+            NEXT_PUBLIC_APP_DOMAIN
+            NEXT_PUBLIC_AUTH_CSRF_COOKIE_NAME
+            NEXT_PUBLIC_AUTH_CSRF_HEADER_NAME
+            NEXT_PUBLIC_TURNSTILE_SITE_KEY
+            NEXT_PUBLIC_TURNSTILE_LOGIN_ACTION
+            NEXT_PUBLIC_TURNSTILE_BOOKING_ACTION
+            NEXT_PUBLIC_TURNSTILE_RESCHEDULE_ACTION
+          )
+
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is required in the production environment."
+              exit 1
+            fi
+          done
+
+          case "$NEXT_PUBLIC_TURNSTILE_SITE_KEY" in
+            TU_SITE_KEY_PUBLICA_REAL|your-turnstile-site-key|CHANGE_ME|changeme|placeholder)
+              echo "::error::NEXT_PUBLIC_TURNSTILE_SITE_KEY contains a placeholder."
+              exit 1
+              ;;
+          esac
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Submit production Cloud Build
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gcloud builds submit . \
+            --project="${GCP_PROJECT_ID}" \
+            --region="${GCP_REGION}" \
+            --config=cloudbuild.production.yaml \
+            --service-account="projects/${GCP_PROJECT_ID}/serviceAccounts/${GCP_CLOUD_BUILD_SERVICE_ACCOUNT}" \
+            --substitutions="_REGION=${GCP_REGION},_ARTIFACT_REPOSITORY=${GCP_ARTIFACT_REPOSITORY},_GIT_SHA=${GITHUB_SHA},_BACKEND_SERVICE=${GCP_BACKEND_SERVICE},_FRONTEND_SERVICE=${GCP_FRONTEND_SERVICE},_MIGRATION_JOB=${GCP_MIGRATION_JOB},_BACKEND_SMOKE_URL=${PRODUCTION_BACKEND_SMOKE_URL},_FRONTEND_SMOKE_URL=${PRODUCTION_FRONTEND_SMOKE_URL},_NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL},_NEXT_PUBLIC_APP_DOMAIN=${NEXT_PUBLIC_APP_DOMAIN},_NEXT_PUBLIC_AUTH_CSRF_COOKIE_NAME=${NEXT_PUBLIC_AUTH_CSRF_COOKIE_NAME},_NEXT_PUBLIC_AUTH_CSRF_HEADER_NAME=${NEXT_PUBLIC_AUTH_CSRF_HEADER_NAME},_NEXT_PUBLIC_TURNSTILE_SITE_KEY=${NEXT_PUBLIC_TURNSTILE_SITE_KEY},_NEXT_PUBLIC_TURNSTILE_LOGIN_ACTION=${NEXT_PUBLIC_TURNSTILE_LOGIN_ACTION},_NEXT_PUBLIC_TURNSTILE_BOOKING_ACTION=${NEXT_PUBLIC_TURNSTILE_BOOKING_ACTION},_NEXT_PUBLIC_TURNSTILE_RESCHEDULE_ACTION=${NEXT_PUBLIC_TURNSTILE_RESCHEDULE_ACTION},_NEXT_PUBLIC_SENTRY_ENABLED=${NEXT_PUBLIC_SENTRY_ENABLED},_NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN},_NEXT_PUBLIC_SENTRY_ENVIRONMENT=${NEXT_PUBLIC_SENTRY_ENVIRONMENT},_NEXT_PUBLIC_SENTRY_RELEASE=${GITHUB_SHA},_NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE=${NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE},_NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE=${NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE},_NEXT_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE=${NEXT_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE}"

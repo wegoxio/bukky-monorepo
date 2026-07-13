@@ -1,0 +1,331 @@
+substitutions:
+  _REGION: us-central1
+  _ARTIFACT_REPOSITORY: bukky
+  _BACKEND_IMAGE_NAME: bukky-backend
+  _FRONTEND_IMAGE_NAME: bukky-frontend
+  _OPERATIONS_IMAGE_NAME: bukky-backend-ops
+  _BACKEND_SERVICE: bukky-backend
+  _FRONTEND_SERVICE: bukky-frontend
+  _MIGRATION_JOB: bukky-db-migrate
+  _GIT_SHA: manual
+  _BACKEND_SMOKE_URL: ''
+  _FRONTEND_SMOKE_URL: ''
+  _NEXT_PUBLIC_API_URL: ''
+  _NEXT_PUBLIC_APP_DOMAIN: ''
+  _NEXT_PUBLIC_AUTH_CSRF_COOKIE_NAME: bukky_csrf
+  _NEXT_PUBLIC_AUTH_CSRF_HEADER_NAME: x-csrf-token
+  _NEXT_PUBLIC_TURNSTILE_SITE_KEY: ''
+  _NEXT_PUBLIC_TURNSTILE_LOGIN_ACTION: login
+  _NEXT_PUBLIC_TURNSTILE_BOOKING_ACTION: booking_create
+  _NEXT_PUBLIC_TURNSTILE_RESCHEDULE_ACTION: booking_reschedule
+  _NEXT_PUBLIC_SENTRY_ENABLED: 'false'
+  _NEXT_PUBLIC_SENTRY_DSN: ''
+  _NEXT_PUBLIC_SENTRY_ENVIRONMENT: production
+  _NEXT_PUBLIC_SENTRY_RELEASE: manual
+  _NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE: '0.02'
+  _NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE: '0'
+  _NEXT_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE: '0.1'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  substitutionOption: ALLOW_LOOSE
+
+steps:
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: Validate substitutions
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        required=(
+          "_REGION=${_REGION}"
+          "_ARTIFACT_REPOSITORY=${_ARTIFACT_REPOSITORY}"
+          "_BACKEND_IMAGE_NAME=${_BACKEND_IMAGE_NAME}"
+          "_FRONTEND_IMAGE_NAME=${_FRONTEND_IMAGE_NAME}"
+          "_OPERATIONS_IMAGE_NAME=${_OPERATIONS_IMAGE_NAME}"
+          "_BACKEND_SERVICE=${_BACKEND_SERVICE}"
+          "_FRONTEND_SERVICE=${_FRONTEND_SERVICE}"
+          "_MIGRATION_JOB=${_MIGRATION_JOB}"
+          "_GIT_SHA=${_GIT_SHA}"
+          "_NEXT_PUBLIC_API_URL=${_NEXT_PUBLIC_API_URL}"
+          "_NEXT_PUBLIC_APP_DOMAIN=${_NEXT_PUBLIC_APP_DOMAIN}"
+          "_NEXT_PUBLIC_AUTH_CSRF_COOKIE_NAME=${_NEXT_PUBLIC_AUTH_CSRF_COOKIE_NAME}"
+          "_NEXT_PUBLIC_AUTH_CSRF_HEADER_NAME=${_NEXT_PUBLIC_AUTH_CSRF_HEADER_NAME}"
+          "_NEXT_PUBLIC_TURNSTILE_SITE_KEY=${_NEXT_PUBLIC_TURNSTILE_SITE_KEY}"
+          "_NEXT_PUBLIC_TURNSTILE_LOGIN_ACTION=${_NEXT_PUBLIC_TURNSTILE_LOGIN_ACTION}"
+          "_NEXT_PUBLIC_TURNSTILE_BOOKING_ACTION=${_NEXT_PUBLIC_TURNSTILE_BOOKING_ACTION}"
+          "_NEXT_PUBLIC_TURNSTILE_RESCHEDULE_ACTION=${_NEXT_PUBLIC_TURNSTILE_RESCHEDULE_ACTION}"
+        )
+
+        for pair in "$${required[@]}"; do
+          name="$${pair%%=*}"
+          value="$${pair#*=}"
+          if [[ -z "$${value}" ]]; then
+            echo "$${name} is required."
+            exit 1
+          fi
+        done
+
+        case "${_NEXT_PUBLIC_TURNSTILE_SITE_KEY}" in
+          TU_SITE_KEY_PUBLICA_REAL|your-turnstile-site-key|CHANGE_ME|changeme|placeholder)
+            echo "_NEXT_PUBLIC_TURNSTILE_SITE_KEY contains a placeholder."
+            exit 1
+            ;;
+        esac
+
+        if [[ "${_GIT_SHA}" == "manual" || "${_NEXT_PUBLIC_SENTRY_RELEASE}" == "manual" ]]; then
+          echo "_GIT_SHA and _NEXT_PUBLIC_SENTRY_RELEASE must identify the deployed commit."
+          exit 1
+        fi
+
+  - name: gcr.io/cloud-builders/docker
+    id: Build backend
+    waitFor:
+      - Validate substitutions
+    args:
+      - build
+      - --file
+      - booking-system-backend/Dockerfile
+      - --target
+      - production
+      - --tag
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/${_BACKEND_IMAGE_NAME}:${_GIT_SHA}
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    id: Build frontend
+    waitFor:
+      - Validate substitutions
+    args:
+      - build
+      - --file
+      - booking-system-frontend/Dockerfile
+      - --build-arg
+      - NEXT_PUBLIC_API_URL=${_NEXT_PUBLIC_API_URL}
+      - --build-arg
+      - NEXT_PUBLIC_APP_DOMAIN=${_NEXT_PUBLIC_APP_DOMAIN}
+      - --build-arg
+      - NEXT_PUBLIC_AUTH_CSRF_COOKIE_NAME=${_NEXT_PUBLIC_AUTH_CSRF_COOKIE_NAME}
+      - --build-arg
+      - NEXT_PUBLIC_AUTH_CSRF_HEADER_NAME=${_NEXT_PUBLIC_AUTH_CSRF_HEADER_NAME}
+      - --build-arg
+      - NEXT_PUBLIC_TURNSTILE_SITE_KEY=${_NEXT_PUBLIC_TURNSTILE_SITE_KEY}
+      - --build-arg
+      - NEXT_PUBLIC_TURNSTILE_LOGIN_ACTION=${_NEXT_PUBLIC_TURNSTILE_LOGIN_ACTION}
+      - --build-arg
+      - NEXT_PUBLIC_TURNSTILE_BOOKING_ACTION=${_NEXT_PUBLIC_TURNSTILE_BOOKING_ACTION}
+      - --build-arg
+      - NEXT_PUBLIC_TURNSTILE_RESCHEDULE_ACTION=${_NEXT_PUBLIC_TURNSTILE_RESCHEDULE_ACTION}
+      - --build-arg
+      - NEXT_PUBLIC_SENTRY_ENABLED=${_NEXT_PUBLIC_SENTRY_ENABLED}
+      - --build-arg
+      - NEXT_PUBLIC_SENTRY_DSN=${_NEXT_PUBLIC_SENTRY_DSN}
+      - --build-arg
+      - NEXT_PUBLIC_SENTRY_ENVIRONMENT=${_NEXT_PUBLIC_SENTRY_ENVIRONMENT}
+      - --build-arg
+      - NEXT_PUBLIC_SENTRY_RELEASE=${_NEXT_PUBLIC_SENTRY_RELEASE}
+      - --build-arg
+      - NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE=${_NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE}
+      - --build-arg
+      - NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE=${_NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE}
+      - --build-arg
+      - NEXT_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE=${_NEXT_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE}
+      - --tag
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/${_FRONTEND_IMAGE_NAME}:${_GIT_SHA}
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    id: Build operations/migration image
+    waitFor:
+      - Validate substitutions
+    args:
+      - build
+      - --file
+      - booking-system-backend/Dockerfile
+      - --target
+      - operations
+      - --tag
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/${_OPERATIONS_IMAGE_NAME}:${_GIT_SHA}
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    id: Push backend
+    waitFor:
+      - Build backend
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/${_BACKEND_IMAGE_NAME}:${_GIT_SHA}
+
+  - name: gcr.io/cloud-builders/docker
+    id: Push frontend
+    waitFor:
+      - Build frontend
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/${_FRONTEND_IMAGE_NAME}:${_GIT_SHA}
+
+  - name: gcr.io/cloud-builders/docker
+    id: Push operations
+    waitFor:
+      - Build operations/migration image
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/${_OPERATIONS_IMAGE_NAME}:${_GIT_SHA}
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: Update migration job image
+    waitFor:
+      - Push backend
+      - Push frontend
+      - Push operations
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        operations_image="${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/${_OPERATIONS_IMAGE_NAME}:${_GIT_SHA}"
+        gcloud run jobs update "${_MIGRATION_JOB}" \
+          --project="$PROJECT_ID" \
+          --region="${_REGION}" \
+          --image="$${operations_image}" \
+          --quiet
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: Execute migrations and wait
+    waitFor:
+      - Update migration job image
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        gcloud run jobs execute "${_MIGRATION_JOB}" \
+          --project="$PROJECT_ID" \
+          --region="${_REGION}" \
+          --wait \
+          --quiet
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: Deploy backend
+    waitFor:
+      - Execute migrations and wait
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        backend_image="${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/${_BACKEND_IMAGE_NAME}:${_GIT_SHA}"
+        gcloud run services update "${_BACKEND_SERVICE}" \
+          --project="$PROJECT_ID" \
+          --region="${_REGION}" \
+          --image="$${backend_image}" \
+          --quiet
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: Verify backend revision
+    waitFor:
+      - Deploy backend
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        expected_image="${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/${_BACKEND_IMAGE_NAME}:${_GIT_SHA}"
+        revision="$$(gcloud run services describe "${_BACKEND_SERVICE}" \
+          --project="$PROJECT_ID" \
+          --region="${_REGION}" \
+          --format='value(status.latestReadyRevisionName)')"
+        actual_image="$$(gcloud run revisions describe "$${revision}" \
+          --project="$PROJECT_ID" \
+          --region="${_REGION}" \
+          --format='value(spec.containers[0].image)')"
+        if [[ "$${actual_image}" != "$${expected_image}" ]]; then
+          echo "Backend ready revision does not use the expected image."
+          echo "Expected: $${expected_image}"
+          echo "Actual: $${actual_image}"
+          exit 1
+        fi
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: Backend smoke test
+    waitFor:
+      - Verify backend revision
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        service_url="$$(gcloud run services describe "${_BACKEND_SERVICE}" \
+          --project="$PROJECT_ID" \
+          --region="${_REGION}" \
+          --format='value(status.url)')"
+        configured_smoke_url="${_BACKEND_SMOKE_URL}"
+        if [[ -n "$${configured_smoke_url}" ]]; then
+          smoke_url="$${configured_smoke_url}"
+        else
+          smoke_url="$${service_url}/api/health"
+        fi
+        echo "Running backend smoke test."
+        curl --fail --show-error --silent --retry 6 --retry-delay 5 --max-time 10 "$${smoke_url}" \
+          | grep -q '"status":"ok"'
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: Deploy frontend
+    waitFor:
+      - Backend smoke test
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        frontend_image="${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/${_FRONTEND_IMAGE_NAME}:${_GIT_SHA}"
+        gcloud run services update "${_FRONTEND_SERVICE}" \
+          --project="$PROJECT_ID" \
+          --region="${_REGION}" \
+          --image="$${frontend_image}" \
+          --quiet
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: Verify frontend revision
+    waitFor:
+      - Deploy frontend
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        expected_image="${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/${_FRONTEND_IMAGE_NAME}:${_GIT_SHA}"
+        revision="$$(gcloud run services describe "${_FRONTEND_SERVICE}" \
+          --project="$PROJECT_ID" \
+          --region="${_REGION}" \
+          --format='value(status.latestReadyRevisionName)')"
+        actual_image="$$(gcloud run revisions describe "$${revision}" \
+          --project="$PROJECT_ID" \
+          --region="${_REGION}" \
+          --format='value(spec.containers[0].image)')"
+        if [[ "$${actual_image}" != "$${expected_image}" ]]; then
+          echo "Frontend ready revision does not use the expected image."
+          echo "Expected: $${expected_image}"
+          echo "Actual: $${actual_image}"
+          exit 1
+        fi
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: Frontend smoke test
+    waitFor:
+      - Verify frontend revision
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        service_url="$$(gcloud run services describe "${_FRONTEND_SERVICE}" \
+          --project="$PROJECT_ID" \
+          --region="${_REGION}" \
+          --format='value(status.url)')"
+        configured_smoke_url="${_FRONTEND_SMOKE_URL}"
+        if [[ -n "$${configured_smoke_url}" ]]; then
+          smoke_url="$${configured_smoke_url}"
+        else
+          smoke_url="$${service_url}"
+        fi
+        echo "Running frontend smoke test."
+        curl --fail --show-error --silent --retry 6 --retry-delay 5 --max-time 10 "$${smoke_url}" \
+          | grep -Eiq '<html|Bukky|__next'
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/${_BACKEND_IMAGE_NAME}:${_GIT_SHA}
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/${_FRONTEND_IMAGE_NAME}:${_GIT_SHA}
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/${_OPERATIONS_IMAGE_NAME}:${_GIT_SHA}

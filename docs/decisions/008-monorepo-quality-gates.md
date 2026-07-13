@@ -56,14 +56,14 @@ Pull requests hacia `develop` y `main` ejecutan:
 Push a `develop`:
 
 - Ejecuta quality gates.
-- Despliega staging si Vercel está configurado.
+- No despliega staging automáticamente.
 - Ejecuta smoke tests si las URLs están configuradas.
 
 Push a `main`:
 
 - Ejecuta quality gates.
-- Mantiene gate informativo de migraciones hasta definir política automatizada.
-- Despliega production si Vercel está configurado.
+- Ejecuta migraciones con Cloud Run Job antes de desplegar backend.
+- Despliega production con GitHub Actions, Workload Identity Federation, Cloud Build y Cloud Run.
 - Ejecuta smoke tests si las URLs están configuradas.
 
 ## TypeORM vs MikroORM
@@ -85,5 +85,5 @@ Ventajas:
 Costes:
 
 - Requiere instalar dependencias desde raíz.
-- Requiere configurar secrets de Vercel para deploy real.
+- Requiere configurar Workload Identity Federation, IAM y GitHub Environment `production`.
 - Los errores existentes de lint/typecheck pueden aparecer como deuda técnica real que debe corregirse gradualmente.

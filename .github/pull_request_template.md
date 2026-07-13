@@ -21,6 +21,8 @@
 - [ ] `pnpm typecheck` pasa
 - [ ] `pnpm test` pasa
 - [ ] `pnpm build` pasa
+- [ ] Si aplica, `pnpm ci:test:e2e:backend` pasa
+- [ ] Si aplica, `pnpm ci:test:integration:backend` pasa con PostgreSQL
 - [ ] No hay secrets, tokens ni credenciales en el diff
 - [ ] Se actualizaron docs/ADR si aplica
 - [ ] Se agregaron o actualizaron migraciones si cambió base de datos

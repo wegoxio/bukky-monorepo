@@ -1,0 +1,327 @@
+name: Pull Request Validation
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-validation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  branch-policy:
+    name: Branch policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Validate source and target branches
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          base="${{ github.base_ref }}"
+          head="${{ github.head_ref }}"
+
+          if [[ "$base" == "develop" ]]; then
+            if [[ "$head" != feature-* ]]; then
+              echo "::error::Pull requests into develop must come from a branch whose name starts with feature-."
+              exit 1
+            fi
+            exit 0
+          fi
+
+          if [[ "$base" == "main" ]]; then
+            if [[ "$head" != "develop" ]]; then
+              echo "::error::Pull requests into main must come only from develop."
+              exit 1
+            fi
+            exit 0
+          fi
+
+          echo "::error::Unsupported pull request target: $base"
+          exit 1
+
+  formatting:
+    name: Format check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: ${{ !github.event.pull_request.draft }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup monorepo
+        uses: ./.github/actions/setup-monorepo
+
+      - name: Check formatting
+        run: pnpm ci:format
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: ${{ !github.event.pull_request.draft }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup monorepo
+        uses: ./.github/actions/setup-monorepo
+
+      - name: Lint backend
+        run: pnpm ci:lint:backend
+
+      - name: Lint frontend
+        run: pnpm ci:lint:frontend
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: ${{ !github.event.pull_request.draft }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup monorepo
+        uses: ./.github/actions/setup-monorepo
+
+      - name: Typecheck backend
+        run: pnpm ci:typecheck:backend
+
+      - name: Typecheck frontend
+        run: pnpm ci:typecheck:frontend
+
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    if: ${{ !github.event.pull_request.draft }}
+
+    env:
+      NODE_ENV: test
+      NEXT_PUBLIC_API_URL: http://localhost:3001/api
+      NEXT_PUBLIC_APP_DOMAIN: http://localhost:3000
+      NEXT_PUBLIC_AUTH_CSRF_COOKIE_NAME: bukky_csrf
+      NEXT_PUBLIC_AUTH_CSRF_HEADER_NAME: x-csrf-token
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: 1x00000000000000000000AA
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup monorepo
+        uses: ./.github/actions/setup-monorepo
+
+      - name: Backend unit tests
+        run: pnpm ci:test:unit:backend
+
+      - name: Frontend unit tests
+        run: pnpm ci:test:unit:frontend
+
+  backend-integration:
+    name: Backend integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    if: ${{ !github.event.pull_request.draft }}
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: bukky_ci
+          POSTGRES_USER: bukky_ci
+          POSTGRES_PASSWORD: bukky_ci_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bukky_ci -d bukky_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      NODE_ENV: test
+      APP_PUBLIC_URL: http://localhost:3000
+      CORS_ORIGINS: http://localhost:3000
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_USER: bukky_ci
+      DB_PASSWORD: bukky_ci_password
+      DB_NAME: bukky_ci
+      DB_SSL: false
+      JWT_SECRET: ci-jwt-secret-with-minimum-length
+      JWT_REFRESH_SECRET: ci-refresh-secret-with-minimum-length
+      MFA_CHALLENGE_SECRET: ci-mfa-challenge-secret-with-minimum-length
+      TURNSTILE_ENABLED: false
+      RUN_DB_INTEGRATION: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup monorepo
+        uses: ./.github/actions/setup-monorepo
+
+      - name: Run migrations
+        working-directory: booking-system-backend
+        run: pnpm run migration:run
+
+      - name: Run backend integration tests
+        run: pnpm ci:test:integration:backend
+
+  backend-e2e:
+    name: Backend e2e tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: ${{ !github.event.pull_request.draft }}
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: bukky_ci
+          POSTGRES_USER: bukky_ci
+          POSTGRES_PASSWORD: bukky_ci_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bukky_ci -d bukky_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      NODE_ENV: test
+      APP_PUBLIC_URL: http://localhost:3000
+      CORS_ORIGINS: http://localhost:3000
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_USER: bukky_ci
+      DB_PASSWORD: bukky_ci_password
+      DB_NAME: bukky_ci
+      DB_SSL: false
+      JWT_SECRET: ci-jwt-secret-with-minimum-length
+      JWT_REFRESH_SECRET: ci-refresh-secret-with-minimum-length
+      MFA_CHALLENGE_SECRET: ci-mfa-challenge-secret-with-minimum-length
+      TURNSTILE_ENABLED: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup monorepo
+        uses: ./.github/actions/setup-monorepo
+
+      - name: Run backend e2e tests
+        run: pnpm ci:test:e2e:backend
+
+  builds:
+    name: Builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    if: ${{ !github.event.pull_request.draft }}
+
+    env:
+      NEXT_PUBLIC_API_URL: http://localhost:3001/api
+      NEXT_PUBLIC_APP_DOMAIN: http://localhost:3000
+      NEXT_PUBLIC_AUTH_CSRF_COOKIE_NAME: bukky_csrf
+      NEXT_PUBLIC_AUTH_CSRF_HEADER_NAME: x-csrf-token
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: 1x00000000000000000000AA
+      NEXT_PUBLIC_TURNSTILE_LOGIN_ACTION: login
+      NEXT_PUBLIC_TURNSTILE_BOOKING_ACTION: booking_create
+      NEXT_PUBLIC_TURNSTILE_RESCHEDULE_ACTION: booking_reschedule
+      NEXT_PUBLIC_SENTRY_ENABLED: false
+      NEXT_PUBLIC_SENTRY_ENVIRONMENT: ci
+      NEXT_PUBLIC_SENTRY_RELEASE: ci
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup monorepo
+        uses: ./.github/actions/setup-monorepo
+
+      - name: Build backend
+        run: pnpm ci:build:backend
+
+      - name: Build frontend
+        run: pnpm ci:build:frontend
+
+  ci-required:
+    name: CI Required
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: always()
+    needs:
+      - branch-policy
+      - formatting
+      - lint
+      - typecheck
+      - unit-tests
+      - backend-integration
+      - backend-e2e
+      - builds
+
+    steps:
+      - name: Evaluate required checks
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          draft="${{ github.event.pull_request.draft }}"
+          branch_policy="${{ needs.branch-policy.result }}"
+
+          if [[ "$branch_policy" != "success" ]]; then
+            echo "::error::Branch policy failed: $branch_policy"
+            exit 1
+          fi
+
+          if [[ "$draft" == "true" ]]; then
+            echo "Draft PR: heavy checks intentionally skipped after branch policy passed."
+            exit 0
+          fi
+
+          for result in \
+            "${{ needs.formatting.result }}" \
+            "${{ needs.lint.result }}" \
+            "${{ needs.typecheck.result }}" \
+            "${{ needs.unit-tests.result }}" \
+            "${{ needs.backend-integration.result }}" \
+            "${{ needs.backend-e2e.result }}" \
+            "${{ needs.builds.result }}"; do
+            if [[ "$result" != "success" ]]; then
+              echo "::error::A required CI job did not pass. Result: $result"
+              exit 1
+            fi
+          done
+
+          echo "All required CI jobs passed."

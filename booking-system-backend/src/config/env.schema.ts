@@ -42,6 +42,9 @@ function parseOptionalString(value: unknown): unknown {
   return normalized;
 }
 
+const envBoolean = (defaultValue: boolean) =>
+  z.preprocess(parseOptionalBoolean, z.boolean()).default(defaultValue);
+
 function isNotCloudFrontUrl(value: string | undefined): boolean {
   if (!value) return true;
 
@@ -64,7 +67,7 @@ export const envSchema = z
         z.array(z.string().url()).min(1, 'CORS_ORIGINS requiere al menos 1 origen valido'),
       )
       .default(['http://localhost:3000']),
-    CORS_ALLOW_CREDENTIALS: z.coerce.boolean().default(true),
+    CORS_ALLOW_CREDENTIALS: envBoolean(true),
     CORS_ALLOWED_HEADERS: z
       .preprocess(
         parseCsvToArray,
@@ -85,12 +88,12 @@ export const envSchema = z
     DB_USER: z.string(),
     DB_PASSWORD: z.string(),
     DB_NAME: z.string(),
-    DB_SSL: z.coerce.boolean().default(false),
-    DB_LOGGING: z.coerce.boolean().default(false),
+    DB_SSL: envBoolean(false),
+    DB_LOGGING: envBoolean(false),
     DB_POOL_MAX: z.coerce.number().int().positive().optional(),
     DB_POOL_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
     DB_POOL_CONNECTION_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
-    DB_POOL_KEEP_ALIVE: z.coerce.boolean().default(true),
+    DB_POOL_KEEP_ALIVE: envBoolean(true),
 
     // Auth (JWT)
     JWT_SECRET: z.string().min(10),
@@ -113,7 +116,7 @@ export const envSchema = z
     AUTH_CSRF_COOKIE_DOMAIN: z.preprocess(parseOptionalString, z.string().min(1).optional()),
     AUTH_CSRF_COOKIE_PATH: z.string().min(1).default('/'),
     AUTH_CSRF_HEADER_NAME: z.string().min(1).default('x-csrf-token'),
-    TURNSTILE_ENABLED: z.coerce.boolean().default(false),
+    TURNSTILE_ENABLED: envBoolean(false),
     TURNSTILE_SECRET_KEY: z.string().optional(),
     TURNSTILE_VERIFY_URL: z
       .string()
@@ -137,12 +140,12 @@ export const envSchema = z
     RATE_LIMIT_LIMIT: z.coerce.number().default(120),
 
     // Performance observability
-    PERFORMANCE_LOG_ENABLED: z.coerce.boolean().default(true),
-    PERFORMANCE_LOG_ALL_REQUESTS: z.coerce.boolean().default(false),
+    PERFORMANCE_LOG_ENABLED: envBoolean(true),
+    PERFORMANCE_LOG_ALL_REQUESTS: envBoolean(false),
     PERFORMANCE_SLOW_REQUEST_MS: z.coerce.number().int().positive().default(750),
 
     // Sentry
-    SENTRY_ENABLED: z.coerce.boolean().default(false),
+    SENTRY_ENABLED: envBoolean(false),
     SENTRY_DSN: z.string().url().optional(),
     SENTRY_ENVIRONMENT: z.string().min(1).optional(),
     SENTRY_RELEASE: z.string().min(1).optional(),
@@ -164,11 +167,11 @@ export const envSchema = z
     AWS_ACCESS_KEY_ID: z.string().optional(),
     AWS_SECRET_ACCESS_KEY: z.string().optional(),
     AWS_SESSION_TOKEN: z.string().optional(),
-    AWS_S3_FORCE_PATH_STYLE: z.coerce.boolean().default(false),
+    AWS_S3_FORCE_PATH_STYLE: envBoolean(false),
 
     // Email notifications
     APP_PUBLIC_URL: z.string().url(),
-    MAIL_ENABLED: z.coerce.boolean().default(false),
+    MAIL_ENABLED: envBoolean(false),
     MAIL_FROM_EMAIL: z.string().email().optional(),
     MAIL_FROM_NAME: z.string().min(1).default('Bukky Booking'),
     MAIL_REPLY_TO_EMAIL: z.string().email().optional(),
@@ -181,7 +184,7 @@ export const envSchema = z
     RESEND_API_KEY: z.string().optional(),
 
     // Booking reminders
-    REMINDERS_ENABLED: z.coerce.boolean().default(false),
+    REMINDERS_ENABLED: envBoolean(false),
     REMINDERS_TIMEZONE: z.string().min(1).default('America/Caracas'),
     REMINDERS_DISPATCH_HOUR: z.coerce.number().min(0).max(23).default(17),
     REMINDERS_DISPATCH_MINUTE: z.coerce.number().min(0).max(59).default(0),

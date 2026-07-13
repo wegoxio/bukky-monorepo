@@ -1,10 +1,21 @@
 import { buildBookingCalendarAttachment } from './booking-calendar.ics';
+import type {
+  BookingNotificationBusinessContext,
+  BookingNotificationPayload,
+} from '../notifications.types';
 
 describe('buildBookingCalendarAttachment', () => {
-  const baseBusiness = {
+  const baseBusiness: BookingNotificationBusinessContext = {
     tenantId: 'tenant-1',
     tenantName: 'Barberia Centro',
     tenantSlug: 'barberia-centro',
+    publicEmail: null,
+    phone: null,
+    addressLine: null,
+    city: null,
+    state: null,
+    country: null,
+    postalCode: null,
     settingsUpdatedAt: '2026-03-18T10:00:00.000Z',
     logoKey: null,
     branding: {
@@ -26,7 +37,7 @@ describe('buildBookingCalendarAttachment', () => {
     },
   };
 
-  const baseBooking = {
+  const baseBooking: BookingNotificationPayload = {
     bookingId: 'booking-1',
     status: 'CONFIRMED',
     customerName: 'Carlos',

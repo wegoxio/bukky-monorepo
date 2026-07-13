@@ -11,7 +11,6 @@ import {
   Req,
 } from '@nestjs/common';
 import { AvailabilityQueryDto } from './dto/availability-query.dto';
-import { CreateBookingDto } from './dto/create-booking.dto';
 import { EligibleEmployeesQueryDto } from './dto/eligible-employees-query.dto';
 import { BookingsService } from './bookings.service';
 import { Throttle } from '@nestjs/throttler';
@@ -82,7 +81,7 @@ export class BookingsPublicController {
 
     return this.bookingsService.createPublicBookingByTenantSlug(
       tenantSlug,
-      bookingPayload as CreateBookingDto,
+      bookingPayload,
       normalizedIdempotencyKey,
     );
   }

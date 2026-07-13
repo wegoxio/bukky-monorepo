@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return, @typescript-eslint/require-await, @typescript-eslint/no-unused-vars */
 import { ConflictException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { Employee } from '../employees/entities/employee.entity';
@@ -37,7 +38,6 @@ function createService(overrides: Partial<Service> = {}): Service {
     created_at: new Date('2026-03-10T10:00:00.000Z'),
     updated_at: new Date('2026-03-10T10:00:00.000Z'),
     tenant_id: 'tenant-1',
-    idempotency_key: null,
     tenant: undefined as never,
     name: 'Corte clasico',
     description: 'Servicio base',
@@ -147,6 +147,9 @@ function createBooking(employee: Employee, overrides: Partial<Booking> = {}): Bo
     created_by_user: null,
     items: [createBookingItem()],
     ...overrides,
+    idempotency_key: overrides.idempotency_key ?? null,
+    management_token_hash: overrides.management_token_hash ?? null,
+    management_token_expires_at: overrides.management_token_expires_at ?? null,
   };
 }
 
@@ -192,11 +195,11 @@ describe('BookingsService manual creation', () => {
     employeesRepository.findOne.mockResolvedValue(employee);
     bookingsRepository.findOne.mockImplementation(async () =>
       persistedBooking
-        ? ({
+        ? {
             ...persistedBooking,
             employee,
             items: persistedBooking.items,
-          } as Booking)
+          }
         : createBooking(employee),
     );
     bookingsRepository.find.mockResolvedValue([]);

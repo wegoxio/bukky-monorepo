@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-return, @typescript-eslint/require-await, @typescript-eslint/no-unused-vars */
 import { BadRequestException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { S3StorageService } from '../tenant-settings/services/s3-storage.service';

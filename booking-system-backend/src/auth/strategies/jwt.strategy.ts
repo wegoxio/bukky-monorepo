@@ -16,9 +16,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     @InjectRepository(AuthSession)
     private readonly authSessionsRepo: Repository<AuthSession>,
   ) {
+    const jwtSecret = config.get<string>('JWT_SECRET');
+    if (!jwtSecret) {
+      throw new Error('JWT_SECRET is not configured');
+    }
+
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
-      secretOrKey: config.get<string>('JWT_SECRET'),
+      secretOrKey: jwtSecret,
     });
   }
 

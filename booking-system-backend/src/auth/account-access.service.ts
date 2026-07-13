@@ -131,6 +131,7 @@ export class AccountAccessService {
     await this.notificationsService.sendPasswordResetEmail({
       email: user.email,
       name: user.name,
+      tenantId: user.tenant_id,
       businessName: user.tenant?.name ?? 'Bukky Booking',
       resetUrl,
       expiresAt: createdToken.expiresAt,
@@ -392,6 +393,7 @@ export class AccountAccessService {
     await this.notificationsService.sendTenantAdminInvitationEmail({
       email: freshUser.email,
       name: freshUser.name,
+      tenantId: freshUser.tenant_id!,
       tenantName: freshUser.tenant!.name,
       setupUrl,
       expiresAt: createdToken.expiresAt,

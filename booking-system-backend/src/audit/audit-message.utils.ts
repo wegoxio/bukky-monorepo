@@ -202,10 +202,13 @@ function buildByAction(action: string, metadata?: Record<string, any> | null): s
 
     case 'BOOKING_CREATED':
       return `Cita creada (${Array.isArray(metadata?.service_ids) ? metadata.service_ids.length : 0} servicio(s)).`;
-    case 'BOOKING_STATUS_UPDATED':
+    case 'BOOKING_STATUS_UPDATED': {
+      const status = typeof metadata?.status === 'string' ? metadata.status : undefined;
+      const statusLabel = status ? (STATUS_LABELS[status] ?? status) : 'N/A';
       return metadata?.cancellation_reason
-        ? `Estado de cita cambiado a ${STATUS_LABELS[metadata?.status] ?? metadata?.status ?? 'N/A'} (${metadata.cancellation_reason}).`
-        : `Estado de cita cambiado a ${STATUS_LABELS[metadata?.status] ?? metadata?.status ?? 'N/A'}.`;
+        ? `Estado de cita cambiado a ${statusLabel} (${metadata.cancellation_reason}).`
+        : `Estado de cita cambiado a ${statusLabel}.`;
+    }
 
     case 'TENANT_SETTINGS_UPDATED':
       return `Configuración del negocio actualizada (${listUpdatedFields(metadata)}).`;

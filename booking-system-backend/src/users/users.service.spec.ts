@@ -41,6 +41,13 @@ function makeTenantAdmin(overrides: Partial<User> = {}): User {
       name: 'Tenant',
       slug: 'tenant',
       is_active: true,
+      address_line: null,
+      city: null,
+      state: null,
+      country: null,
+      postal_code: null,
+      phone: null,
+      public_email: null,
     },
     is_active: true,
     email_verified_at: new Date('2026-01-01T00:00:00.000Z'),
@@ -51,6 +58,12 @@ function makeTenantAdmin(overrides: Partial<User> = {}): User {
     last_failed_login_at: null,
     locked_until: null,
     last_login_at: null,
+    mfa_enabled_at: null,
+    mfa_totp_secret_encrypted: null,
+    mfa_recovery_code_hashes: null,
+    mfa_pending_secret_encrypted: null,
+    mfa_pending_expires_at: null,
+    mfa_last_used_at: null,
     ...overrides,
   };
 }
@@ -61,39 +74,32 @@ function createServiceTestBed(initialUser: User) {
     update: jest.fn().mockResolvedValue({ affected: 2 }),
   };
   const transactionalUsersRepo = {
-    findOne: jest.fn<() => Promise<User>>().mockImplementation(() => Promise.resolve(storedUser)),
+    findOne: jest.fn().mockImplementation(() => Promise.resolve(storedUser)),
     findOneBy: jest.fn().mockResolvedValue(null),
-    save: jest.fn<(user: User) => Promise<User>>().mockImplementation((user) => {
-      const nextStoredUser = user as User;
-      storedUser = nextStoredUser;
+    save: jest.fn().mockImplementation((user: User) => {
+      storedUser = user;
       return Promise.resolve(storedUser);
     }),
   };
   const manager = {
-    getRepository: jest
-      .fn<
-        (
-          entity: typeof User | typeof AuthSession,
-        ) => typeof transactionalUsersRepo | typeof authSessionsRepo
-      >()
-      .mockImplementation((entity) => {
-        if (entity === User) return transactionalUsersRepo;
-        if (entity === AuthSession) return authSessionsRepo;
-        throw new Error('Unexpected repository');
-      }),
+    getRepository: jest.fn().mockImplementation((entity: typeof User | typeof AuthSession) => {
+      if (entity === User) return transactionalUsersRepo;
+      if (entity === AuthSession) return authSessionsRepo;
+      throw new Error('Unexpected repository');
+    }),
   };
   const usersRepo = {
     manager: {
       transaction: <T>(callback: (transactionManager: typeof manager) => Promise<T>): Promise<T> =>
         callback(manager),
     },
-    findOne: jest.fn<() => Promise<User>>().mockImplementation(() => Promise.resolve(storedUser)),
+    findOne: jest.fn().mockImplementation(() => Promise.resolve(storedUser)),
   };
   const tenantRepo = {
     findOneBy: jest.fn(),
   };
   const auditService = {
-    log: jest.fn<(input: AuditLogInput) => Promise<void>>().mockResolvedValue(undefined),
+    log: jest.fn().mockResolvedValue(undefined),
   };
   const accountAccessService = {
     issueTenantAdminInvitation: jest.fn().mockResolvedValue({ expires_at: new Date() }),

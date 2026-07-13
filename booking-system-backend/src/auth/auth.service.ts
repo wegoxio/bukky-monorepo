@@ -1068,11 +1068,9 @@ export class AuthService {
       secret: this.mfaChallengeSecret,
       expiresIn: MFA_CHALLENGE_EXPIRES_IN,
     });
-    const decoded = this.jwt.decode(challengeToken);
+    const decoded = this.decodeJwtExpiration(challengeToken);
     const expiresAt =
-      typeof decoded?.exp === 'number'
-        ? new Date(decoded.exp * 1000)
-        : new Date(Date.now() + 5 * 60_000);
+      typeof decoded === 'number' ? new Date(decoded * 1000) : new Date(Date.now() + 5 * 60_000);
 
     await this.authMfaChallengesRepo.save(
       this.authMfaChallengesRepo.create({
@@ -1516,14 +1514,24 @@ export class AuthService {
   }
 
   private getRefreshTokenExpirationDate(refreshToken: string): Date {
-    const decoded = this.jwt.decode(refreshToken);
-    if (typeof decoded?.exp !== 'number') {
+    const exp = this.decodeJwtExpiration(refreshToken);
+    if (typeof exp !== 'number') {
       return new Date(Date.now() + DEFAULT_REFRESH_TOKEN_EXP_SECONDS * 1000);
     }
 
-    const expDate = new Date(decoded.exp * 1000);
+    const expDate = new Date(exp * 1000);
     const minDate = new Date(Date.now() + REFRESH_TOKEN_MIN_SECONDS * 1000);
     return expDate.getTime() > minDate.getTime() ? expDate : minDate;
+  }
+
+  private decodeJwtExpiration(token: string): number | null {
+    const decoded: unknown = this.jwt.decode(token);
+    if (!decoded || typeof decoded !== 'object') {
+      return null;
+    }
+
+    const exp = (decoded as { exp?: unknown }).exp;
+    return typeof exp === 'number' ? exp : null;
   }
 
   private async createSessionTokens(

@@ -149,7 +149,8 @@ export class S3StorageService {
   private envBool(value: unknown, defaultValue = false): boolean {
     if (value === undefined || value === null) return defaultValue;
     if (typeof value === 'boolean') return value;
-    const normalized = String(value).trim().toLowerCase();
+    if (typeof value !== 'string' && typeof value !== 'number') return defaultValue;
+    const normalized = `${value}`.trim().toLowerCase();
     return ['true', '1', 'yes'].includes(normalized);
   }
 }

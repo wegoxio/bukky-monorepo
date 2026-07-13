@@ -134,7 +134,7 @@ export class NotificationsService {
       const failures = results.filter((result) => result.status === 'rejected');
       if (failures.length > 0) {
         failures.forEach((failure, index) => {
-          const reason = failure.status === 'rejected' ? failure.reason : 'Unknown error';
+          const reason: unknown = failure.status === 'rejected' ? failure.reason : 'Unknown error';
           const recipient = dedupedDeliveries[index];
           this.logger.error(
             `Failed to deliver booking notification ${event} for booking ${booking.id} to ${recipient?.audience ?? 'UNKNOWN'} (${recipient ? this.maskEmail(recipient.recipient.email) : 'unknown'}): ${String(reason)}`,
@@ -188,15 +188,23 @@ export class NotificationsService {
   async sendTenantAdminInvitationEmail(input: {
     email: string;
     name: string;
+    tenantId: string;
     tenantName: string;
     setupUrl: string;
     expiresAt: Date;
     idempotencyKey: string;
   }): Promise<void> {
+    const appPublicUrl = this.getAppPublicUrl();
+    const assetBaseUrl = this.resolveMailAssetBaseUrl(appPublicUrl);
+    const business = await this.buildAccessEmailBusinessContext(input.tenantId);
+
     const rendered = buildTenantAdminInvitationEmail({
       tenantName: input.tenantName,
       setupUrl: input.setupUrl,
       expiresAt: input.expiresAt,
+      appPublicUrl,
+      assetBaseUrl,
+      business,
     });
 
     await this.sendTransactionalAccessEmail({
@@ -216,15 +224,23 @@ export class NotificationsService {
   async sendPasswordResetEmail(input: {
     email: string;
     name: string;
+    tenantId?: string | null;
     businessName: string;
     resetUrl: string;
     expiresAt: Date;
     idempotencyKey: string;
   }): Promise<void> {
+    const appPublicUrl = this.getAppPublicUrl();
+    const assetBaseUrl = this.resolveMailAssetBaseUrl(appPublicUrl);
+    const business = await this.buildAccessEmailBusinessContext(input.tenantId ?? null);
+
     const rendered = buildPasswordResetEmail({
       businessName: input.businessName,
       resetUrl: input.resetUrl,
       expiresAt: input.expiresAt,
+      appPublicUrl,
+      assetBaseUrl,
+      business,
     });
 
     await this.sendTransactionalAccessEmail({
@@ -247,10 +263,7 @@ export class NotificationsService {
     business: BookingNotificationBusinessContext;
     payload: BookingNotificationPayload;
   }> {
-    const appPublicUrl = this.configService.get<string>('APP_PUBLIC_URL');
-    if (!appPublicUrl) {
-      throw new Error('APP_PUBLIC_URL is not configured');
-    }
+    const appPublicUrl = this.getAppPublicUrl();
 
     const [tenant, settings] = await Promise.all([
       this.tenantsRepository.findOne({
@@ -315,6 +328,51 @@ export class NotificationsService {
         instructions: item.instructions_snapshot,
       })),
     };
+  }
+
+  private async buildAccessEmailBusinessContext(
+    tenantId: string | null,
+  ): Promise<BookingNotificationBusinessContext | null> {
+    if (!tenantId) {
+      return null;
+    }
+
+    const [tenant, settings] = await Promise.all([
+      this.tenantsRepository.findOne({
+        where: { id: tenantId },
+      }),
+      this.tenantSettingsService.findByTenantId(tenantId),
+    ]);
+
+    if (!tenant) {
+      return null;
+    }
+
+    return {
+      tenantId: tenant.id,
+      tenantName: tenant.name,
+      tenantSlug: tenant.slug,
+      publicEmail: tenant.public_email,
+      phone: tenant.phone,
+      addressLine: tenant.address_line,
+      city: tenant.city,
+      state: tenant.state,
+      country: tenant.country,
+      postalCode: tenant.postal_code,
+      settingsUpdatedAt: settings.updated_at.toISOString(),
+      logoKey: settings.logo_key,
+      branding: settings.branding,
+      theme: settings.theme,
+    };
+  }
+
+  private getAppPublicUrl(): string {
+    const appPublicUrl = this.configService.get<string>('APP_PUBLIC_URL');
+    if (!appPublicUrl) {
+      throw new Error('APP_PUBLIC_URL is not configured');
+    }
+
+    return appPublicUrl;
   }
 
   private async sendBookingEmailToRecipient(input: {

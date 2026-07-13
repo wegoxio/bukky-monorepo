@@ -1,5 +1,6 @@
 import { CallHandler, ExecutionContext, Injectable, Logger, NestInterceptor } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { HttpArgumentsHost } from '@nestjs/common/interfaces';
 import type { Request, Response } from 'express';
 import { Observable, throwError } from 'rxjs';
 import { catchError, tap } from 'rxjs/operators';
@@ -27,7 +28,8 @@ export class HttpPerformanceInterceptor implements NestInterceptor {
       return next.handle();
     }
 
-    const http = context.switchToHttp();
+    const http: HttpArgumentsHost = context.switchToHttp();
+    /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
     const request = http.getRequest<RequestWithRoute>();
     const response = http.getResponse<Response>();
     const startedAt = process.hrtime.bigint();
@@ -38,17 +40,21 @@ export class HttpPerformanceInterceptor implements NestInterceptor {
       request.originalUrl?.split('?')[0] ??
       request.url?.split('?')[0] ??
       'unknown';
+    /* eslint-enable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 
     return next.handle().pipe(
       tap(() => {
+        /* eslint-disable @typescript-eslint/no-unsafe-assignment */
         this.logRequest({
           method,
           routePath,
           statusCode: response.statusCode,
           startedAt,
         });
+        /* eslint-enable @typescript-eslint/no-unsafe-assignment */
       }),
       catchError((error: unknown) => {
+        /* eslint-disable @typescript-eslint/no-unsafe-assignment */
         this.logRequest({
           method,
           routePath,
@@ -56,6 +62,7 @@ export class HttpPerformanceInterceptor implements NestInterceptor {
           startedAt,
           failed: true,
         });
+        /* eslint-enable @typescript-eslint/no-unsafe-assignment */
         return throwError(() => error);
       }),
     );

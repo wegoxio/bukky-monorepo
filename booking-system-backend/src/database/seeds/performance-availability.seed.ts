@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 import 'reflect-metadata';
 import { randomUUID } from 'crypto';
 import { AppDataSource } from '../data-source';
@@ -68,7 +69,7 @@ async function main() {
 
   await AppDataSource.initialize();
 
-  let tenantRows = await AppDataSource.query(
+  const tenantRows = await AppDataSource.query(
     `SELECT "id" FROM "tenants" WHERE "slug" = $1 LIMIT 1`,
     [tenantSlug],
   );

@@ -79,7 +79,7 @@ if (enabled && dsn) {
           event.request.headers,
         ) as typeof event.request.headers;
         event.request.cookies = undefined;
-        event.request.data = sanitizeValue(event.request.data) as typeof event.request.data;
+        event.request.data = sanitizeValue(event.request.data);
         event.request.query_string = sanitizeValue(
           event.request.query_string,
         ) as typeof event.request.query_string;

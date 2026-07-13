@@ -648,6 +648,8 @@ main().catch(async (error) => {
   console.error('❌ Seed de reportes falló:', error);
   try {
     await AppDataSource.destroy();
-  } catch {}
+  } catch {
+    // La conexión puede no haberse inicializado si el seed falla al arrancar.
+  }
   process.exit(1);
 });

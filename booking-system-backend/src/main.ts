@@ -6,6 +6,8 @@ import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { setupSwagger } from './swagger';
+import type { Express } from 'express';
+import type { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
 
 function normalizeOrigin(origin: string): string {
   return origin.trim().replace(/\/+$/, '');
@@ -43,10 +45,8 @@ async function bootstrap() {
     throw new Error('CORS_ORIGINS no puede estar vacio en produccion.');
   }
 
-  app
-    .getHttpAdapter()
-    .getInstance()
-    .set('trust proxy', configService.get<number>('TRUST_PROXY_HOPS', 1));
+  const expressApp = app.getHttpAdapter().getInstance() as Express;
+  expressApp.set('trust proxy', configService.get<number>('TRUST_PROXY_HOPS', 1));
   app.use(cookieParser());
   app.use(
     helmet({
@@ -63,8 +63,11 @@ async function bootstrap() {
   );
 
   app.setGlobalPrefix('api');
-  app.enableCors({
-    origin: (origin, callback) => {
+  const corsOptions: CorsOptions = {
+    origin: (
+      origin: string | undefined,
+      callback: (error: Error | null, allow?: boolean) => void,
+    ) => {
       if (!origin) {
         callback(null, true);
         return;
@@ -83,7 +86,9 @@ async function bootstrap() {
     allowedHeaders: corsAllowedHeaders,
     optionsSuccessStatus: 204,
     maxAge: corsMaxAgeSeconds,
-  });
+  };
+
+  app.enableCors(corsOptions);
 
   app.useGlobalPipes(
     new ValidationPipe({
@@ -97,4 +102,4 @@ async function bootstrap() {
 
   await app.listen(PORT, '0.0.0.0');
 }
-bootstrap();
+void bootstrap();

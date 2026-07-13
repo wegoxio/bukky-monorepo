@@ -50,7 +50,7 @@ export class RemindersScheduler implements OnModuleInit, OnModuleDestroy {
       }
 
       const job = this.schedulerRegistry.getCronJob(jobName);
-      job.stop();
+      void job.stop();
       this.schedulerRegistry.deleteCronJob(jobName);
     }
   }
@@ -85,7 +85,7 @@ export class RemindersScheduler implements OnModuleInit, OnModuleDestroy {
   ): void {
     if (this.schedulerRegistry.doesExist('cron', name)) {
       const existingJob = this.schedulerRegistry.getCronJob(name);
-      existingJob.stop();
+      void existingJob.stop();
       this.schedulerRegistry.deleteCronJob(name);
     }
 

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return, @typescript-eslint/require-await, @typescript-eslint/no-unused-vars, @typescript-eslint/no-unsafe-argument */
 import { Booking } from '../bookings/entities/booking.entity';
 import { BookingItem } from '../bookings/entities/booking-item.entity';
 import { Employee } from '../employees/entities/employee.entity';
@@ -93,6 +94,10 @@ function createBookingItem(overrides: Partial<BookingItem> = {}): BookingItem {
     buffer_before_minutes_snapshot: 5,
     buffer_after_minutes_snapshot: 5,
     price_snapshot: '10.00',
+    pricing_model_snapshot: 'FLAT',
+    unit_price_snapshot: '10.00',
+    quantity_snapshot: 1,
+    line_total_snapshot: '10.00',
     currency_snapshot: 'USD',
     instructions_snapshot: null,
     sort_order: 0,
@@ -112,6 +117,8 @@ function createBooking(overrides: Partial<Booking> = {}): Booking {
     tenant: undefined as never,
     start_at_utc: new Date('2026-03-19T14:00:00.000Z'),
     end_at_utc: new Date('2026-03-19T15:00:00.000Z'),
+    busy_start_at_utc: new Date('2026-03-19T13:55:00.000Z'),
+    busy_end_at_utc: new Date('2026-03-19T15:05:00.000Z'),
     status: 'CONFIRMED',
     completed_at_utc: null,
     completed_by_user_id: null,
@@ -119,6 +126,7 @@ function createBooking(overrides: Partial<Booking> = {}): Booking {
     cancelled_by_user_id: null,
     cancellation_reason: null,
     total_duration_minutes: 40,
+    party_size: 1,
     total_price: '10.00',
     currency: 'USD',
     customer_name: 'Cliente Uno',
@@ -133,6 +141,9 @@ function createBooking(overrides: Partial<Booking> = {}): Booking {
     created_by_user: null,
     items: [createBookingItem()],
     ...overrides,
+    idempotency_key: overrides.idempotency_key ?? null,
+    management_token_hash: overrides.management_token_hash ?? null,
+    management_token_expires_at: overrides.management_token_expires_at ?? null,
   };
 }
 

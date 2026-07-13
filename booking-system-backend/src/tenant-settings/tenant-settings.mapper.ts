@@ -46,7 +46,7 @@ export function extractThemeMode(entity: SettingsEntity): TenantThemeMode {
   if (mode && THEME_MODE_VALUES.includes(mode as TenantThemeMode)) {
     return mode as TenantThemeMode;
   }
-  return DEFAULT_THEME_MODE as TenantThemeMode;
+  return DEFAULT_THEME_MODE;
 }
 
 export function extractThemeOverrides(entity: SettingsEntity): TenantThemeOverrides {
@@ -121,7 +121,7 @@ export function applyBrandingSettings(
 
 export function applyDefaultSettings(entity: SettingsEntity) {
   applyThemeSettings(entity, normalizeThemeSettings(DEFAULT_THEME_SETTINGS));
-  applyThemeMode(entity, DEFAULT_THEME_MODE as TenantThemeMode);
+  applyThemeMode(entity, DEFAULT_THEME_MODE);
   applyThemeOverrides(entity, DEFAULT_THEME_OVERRIDES);
   applyBrandingSettings(entity, DEFAULT_BRANDING_SETTINGS);
 }

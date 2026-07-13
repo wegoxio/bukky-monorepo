@@ -1,4 +1,5 @@
 import { ConfigService } from '@nestjs/config';
+import type { TypeOrmModuleOptions } from '@nestjs/typeorm';
 
 import { makeTypeOrmConfig } from './typeorm.config';
 
@@ -15,7 +16,9 @@ describe('makeTypeOrmConfig', () => {
       DB_SSL: 'true',
     });
 
-    const result = makeTypeOrmConfig(config);
+    const result = makeTypeOrmConfig(config) as TypeOrmModuleOptions & {
+      ssl: false | { rejectUnauthorized: boolean };
+    };
 
     expect(result.extra).toMatchObject({
       max: 1,

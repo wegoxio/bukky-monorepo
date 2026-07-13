@@ -29,7 +29,7 @@ export class CompactRedundantTenantSettings1774900000000 implements MigrationInt
     `);
   }
 
-  public async down(_queryRunner: QueryRunner): Promise<void> {
+  public async down(): Promise<void> {
     // No-op. Deleted redundant rows cannot be restored safely.
   }
 }

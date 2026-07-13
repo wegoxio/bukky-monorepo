@@ -4,23 +4,26 @@ import { ConfigService } from '@nestjs/config';
 function envBool(v: unknown, defaultValue = false): boolean {
   if (v === undefined || v === null) return defaultValue;
   if (typeof v === 'boolean') return v;
-  const s = String(v).trim().toLowerCase();
+  if (typeof v !== 'string' && typeof v !== 'number') return defaultValue;
+  const s = `${v}`.trim().toLowerCase();
   return ['true', '1', 'yes'].includes(s);
 }
 
 function envNumber(v: unknown, defaultValue: number): number {
-  if (v === undefined || v === null || String(v).trim() === '') return defaultValue;
+  if (v === undefined || v === null) return defaultValue;
+  if (typeof v !== 'string' && typeof v !== 'number') return defaultValue;
+  if (`${v}`.trim() === '') return defaultValue;
 
   const parsed = Number(v);
   if (Number.isNaN(parsed)) {
-    throw new Error(`Invalid numeric database config value: ${v}`);
+    throw new Error(`Invalid numeric database config value: ${String(v)}`);
   }
 
   return parsed;
 }
 
 function resolvePoolMax(config: ConfigService, nodeEnv: string): number {
-  const configuredMax = config.get('DB_POOL_MAX');
+  const configuredMax = config.get<unknown>('DB_POOL_MAX');
   if (configuredMax !== undefined) {
     return envNumber(configuredMax, 1);
   }

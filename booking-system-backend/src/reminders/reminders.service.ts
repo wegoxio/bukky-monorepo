@@ -8,7 +8,7 @@ import {
 } from '../bookings/bookings.time-utils';
 import { Booking } from '../bookings/entities/booking.entity';
 import { NotificationsService } from '../notifications/notifications.service';
-import { FindManyOptions, In, Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { BookingReminder } from './entities/booking-reminder.entity';
 import {
   BOOKING_REMINDER_DISPATCHABLE_BOOKING_STATUSES,
@@ -320,7 +320,7 @@ export class RemindersService {
       })
       .orderBy('booking.start_at_utc', 'ASC')
       .addOrderBy('items.sort_order', 'ASC')
-      .getMany() as Promise<ReminderCandidateBooking[]>;
+      .getMany();
   }
 
   private buildReminderCandidates(
@@ -376,7 +376,7 @@ export class RemindersService {
         type: true,
         channel: true,
       },
-    } as FindManyOptions<BookingReminder>);
+    });
 
     return new Set(
       existing.map((reminder) =>

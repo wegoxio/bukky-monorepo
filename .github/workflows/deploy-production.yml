@@ -202,8 +202,39 @@ jobs:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Verify Google Cloud identity and source bucket
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ACTIVE_ACCOUNT="$(
+            gcloud auth list \
+              --filter=status:ACTIVE \
+              --format='value(account)'
+          )"
+
+          echo "Active account: $ACTIVE_ACCOUNT"
+          echo "Expected account: $GCP_DEPLOY_SERVICE_ACCOUNT"
+          echo "Project: $GCP_PROJECT_ID"
+
+          if [[ "$ACTIVE_ACCOUNT" != "$GCP_DEPLOY_SERVICE_ACCOUNT" ]]; then
+            echo "::error::GitHub Actions no está usando la service account esperada."
+            exit 1
+          fi
+
+          gcloud config set project "$GCP_PROJECT_ID"
+
+          gcloud storage buckets describe \
+            "gs://${GCP_PROJECT_ID}_cloudbuild" \
+            --format='value(name)'
+
+          echo "Identity and bucket access verified."
 
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2

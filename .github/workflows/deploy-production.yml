@@ -302,6 +302,7 @@ jobs:
 
           gcloud builds submit . \
             --project="${GCP_PROJECT_ID}" \
+            --billing-project="${GCP_PROJECT_ID}" \
             --region="${GCP_REGION}" \
             --config="cloudbuild.production.yaml" \
             --service-account="${GCP_CLOUD_BUILD_SERVICE_ACCOUNT}" \

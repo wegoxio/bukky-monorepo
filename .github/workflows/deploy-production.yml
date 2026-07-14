@@ -200,44 +200,100 @@ jobs:
           esac
 
       - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+        id: google-auth
+        uses: google-github-actions/auth@v3
         with:
-          project_id: ${{ vars.GCP_PROJECT_ID }}
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
           create_credentials_file: true
           export_environment_variables: true
 
-      - name: Verify Google Cloud identity and source bucket
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          version: '>= 416.0.0'
+
+      - name: Verify Google Cloud authentication
         shell: bash
         run: |
           set -euo pipefail
 
-          ACTIVE_ACCOUNT="$(
-            gcloud auth list \
-              --filter=status:ACTIVE \
-              --format='value(account)'
-          )"
+          echo "Project: ${GCP_PROJECT_ID}"
+          echo "Expected service account: ${GCP_DEPLOY_SERVICE_ACCOUNT}"
 
-          echo "Active account: $ACTIVE_ACCOUNT"
-          echo "Expected account: $GCP_DEPLOY_SERVICE_ACCOUNT"
-          echo "Project: $GCP_PROJECT_ID"
+          credentials_file="${GOOGLE_GHA_CREDS_PATH:-${GOOGLE_APPLICATION_CREDENTIALS:-}}"
 
-          if [[ "$ACTIVE_ACCOUNT" != "$GCP_DEPLOY_SERVICE_ACCOUNT" ]]; then
-            echo "::error::GitHub Actions no está usando la service account esperada."
+          if [[ -z "${credentials_file}" ]]; then
+            echo "::error::Google auth did not export a credentials file."
             exit 1
           fi
 
-          gcloud config set project "$GCP_PROJECT_ID"
+          if [[ ! -f "${credentials_file}" ]]; then
+            echo "::error::The exported Google credentials file does not exist."
+            exit 1
+          fi
 
-          gcloud storage buckets describe \
-            "gs://${GCP_PROJECT_ID}_cloudbuild" \
-            --format='value(name)'
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
 
-          echo "Identity and bucket access verified."
+          credentials_path = (
+              os.environ.get("GOOGLE_GHA_CREDS_PATH")
+              or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+          )
+          expected_service_account = os.environ["GCP_DEPLOY_SERVICE_ACCOUNT"]
 
-      - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v2
+          with open(credentials_path, encoding="utf-8") as credentials_file:
+              credentials = json.load(credentials_file)
+
+          credential_type = credentials.get("type")
+          impersonation_url = credentials.get(
+              "service_account_impersonation_url",
+              "",
+          )
+
+          print(f"Credential type: {credential_type}")
+
+          if credential_type != "external_account":
+              print(
+                  "::error::Expected external_account credentials.",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          if expected_service_account not in impersonation_url:
+              print(
+                  "::error::Credentials do not impersonate the expected "
+                  "service account.",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          print("Service account impersonation configuration: OK")
+          PY
+
+          # Realiza realmente el intercambio OIDC → Google access token.
+          gcloud auth print-access-token >/dev/null
+
+          echo "Google access token exchange: OK"
+
+          # Verifica acceso real al bucket utilizado por builds submit.
+          bucket_name="$(
+            gcloud storage buckets describe \
+              "gs://${GCP_PROJECT_ID}_cloudbuild" \
+              --project="${GCP_PROJECT_ID}" \
+              --format="value(name)"
+          )"
+
+          if [[ "${bucket_name}" != "${GCP_PROJECT_ID}_cloudbuild" ]]; then
+            echo "::error::Unexpected Cloud Build source bucket."
+            exit 1
+          fi
+
+          echo "Cloud Build source bucket access: OK"
 
       - name: Submit production Cloud Build
         shell: bash
@@ -247,6 +303,6 @@ jobs:
           gcloud builds submit . \
             --project="${GCP_PROJECT_ID}" \
             --region="${GCP_REGION}" \
-            --config=cloudbuild.production.yaml \
-            --service-account="projects/${GCP_PROJECT_ID}/serviceAccounts/${GCP_CLOUD_BUILD_SERVICE_ACCOUNT}" \
+            --config="cloudbuild.production.yaml" \
+            --service-account="${GCP_CLOUD_BUILD_SERVICE_ACCOUNT}" \
             --substitutions="_REGION=${GCP_REGION},_ARTIFACT_REPOSITORY=${GCP_ARTIFACT_REPOSITORY},_GIT_SHA=${GITHUB_SHA},_BACKEND_SERVICE=${GCP_BACKEND_SERVICE},_FRONTEND_SERVICE=${GCP_FRONTEND_SERVICE},_MIGRATION_JOB=${GCP_MIGRATION_JOB},_BACKEND_SMOKE_URL=${PRODUCTION_BACKEND_SMOKE_URL},_FRONTEND_SMOKE_URL=${PRODUCTION_FRONTEND_SMOKE_URL},_NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL},_NEXT_PUBLIC_APP_DOMAIN=${NEXT_PUBLIC_APP_DOMAIN},_NEXT_PUBLIC_AUTH_CSRF_COOKIE_NAME=${NEXT_PUBLIC_AUTH_CSRF_COOKIE_NAME},_NEXT_PUBLIC_AUTH_CSRF_HEADER_NAME=${NEXT_PUBLIC_AUTH_CSRF_HEADER_NAME},_NEXT_PUBLIC_TURNSTILE_SITE_KEY=${NEXT_PUBLIC_TURNSTILE_SITE_KEY},_NEXT_PUBLIC_TURNSTILE_LOGIN_ACTION=${NEXT_PUBLIC_TURNSTILE_LOGIN_ACTION},_NEXT_PUBLIC_TURNSTILE_BOOKING_ACTION=${NEXT_PUBLIC_TURNSTILE_BOOKING_ACTION},_NEXT_PUBLIC_TURNSTILE_RESCHEDULE_ACTION=${NEXT_PUBLIC_TURNSTILE_RESCHEDULE_ACTION},_NEXT_PUBLIC_SENTRY_ENABLED=${NEXT_PUBLIC_SENTRY_ENABLED},_NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN},_NEXT_PUBLIC_SENTRY_ENVIRONMENT=${NEXT_PUBLIC_SENTRY_ENVIRONMENT},_NEXT_PUBLIC_SENTRY_RELEASE=${GITHUB_SHA},_NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE=${NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE},_NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE=${NEXT_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE},_NEXT_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE=${NEXT_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE}"

@@ -51,4 +51,11 @@ export const tenantAdminsService = {
       body: JSON.stringify(payload),
     });
   },
+
+  resendInvitation: async (id: string, token: string): Promise<TenantAdmin> => {
+    return apiFetch<TenantAdmin>(`/users/tenant-admins/${id}/resend-invitation`, {
+      method: 'POST',
+      token,
+    });
+  },
 };

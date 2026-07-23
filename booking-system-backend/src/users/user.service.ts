@@ -249,6 +249,30 @@ export class UserService {
     return this.toTenantAdminResponse(updatedTenantAdmin);
   }
 
+  async resendTenantAdminInvitation(
+    id: string,
+    currentUser: CurrentJwtUser,
+  ): Promise<TenantAdminResponse> {
+    const tenantAdmin = await this.findTenantAdminEntityById(id);
+
+    if (!tenantAdmin.is_active) {
+      throw new ConflictException('No se puede reenviar invitación a un administrador inactivo.');
+    }
+
+    if (!tenantAdmin.tenant?.is_active) {
+      throw new ConflictException('No se puede reenviar invitación para un negocio inactivo.');
+    }
+
+    if (this.resolveAccessState(tenantAdmin) === 'ACTIVE') {
+      throw new ConflictException('Este administrador ya completó su acceso.');
+    }
+
+    await this.accountAccessService.resendTenantAdminInvitation(tenantAdmin, currentUser);
+
+    const updatedTenantAdmin = await this.findTenantAdminEntityById(id);
+    return this.toTenantAdminResponse(updatedTenantAdmin);
+  }
+
   private async ensureTenantExists(tenantId: string): Promise<void> {
     const existingTenant = await this.tenantRepo.findOneBy({
       id: tenantId,

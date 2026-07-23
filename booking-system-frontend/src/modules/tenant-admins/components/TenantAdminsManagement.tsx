@@ -44,6 +44,9 @@ export default function TenantAdminsManagement() {
   const [searchQuery, setSearchQuery] = useState('');
   const [tenantAdminToDeactivate, setTenantAdminToDeactivate] = useState<TenantAdmin | null>(null);
   const [isDeactivating, setIsDeactivating] = useState(false);
+  const [tenantAdminToResendInvitation, setTenantAdminToResendInvitation] =
+    useState<TenantAdmin | null>(null);
+  const [isResendingInvitation, setIsResendingInvitation] = useState(false);
 
   const activeTenantAdminsCount = useMemo(
     () => tenantAdmins.filter((tenantAdmin) => tenantAdmin.is_active).length,
@@ -129,6 +132,11 @@ export default function TenantAdminsManagement() {
     setTenantAdminToDeactivate(tenantAdmin);
   };
 
+  const openResendInvitationModal = (tenantAdmin: TenantAdmin) => {
+    if (!tenantAdmin.is_active || tenantAdmin.access_state === 'ACTIVE') return;
+    setTenantAdminToResendInvitation(tenantAdmin);
+  };
+
   const handleNameChange = (value: string) => {
     setForm((prev) => ({ ...prev, name: value }));
   };
@@ -150,6 +158,11 @@ export default function TenantAdminsManagement() {
     setTenantAdminToDeactivate(null);
   };
 
+  const closeResendInvitationModal = () => {
+    if (isResendingInvitation) return;
+    setTenantAdminToResendInvitation(null);
+  };
+
   const handleConfirmDeactivate = async () => {
     if (!token || !tenantAdminToDeactivate) return;
     setIsDeactivating(true);
@@ -166,6 +179,25 @@ export default function TenantAdminsManagement() {
       toast.error(message);
     } finally {
       setIsDeactivating(false);
+    }
+  };
+
+  const handleConfirmResendInvitation = async () => {
+    if (!token || !tenantAdminToResendInvitation) return;
+    setIsResendingInvitation(true);
+    setErrorMessage('');
+    try {
+      await tenantAdminsService.resendInvitation(tenantAdminToResendInvitation.id, token);
+      await loadData();
+      toast.success('Invitación reenviada correctamente.');
+      setTenantAdminToResendInvitation(null);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo reenviar la invitación.';
+      setErrorMessage(message);
+      toast.error(message);
+    } finally {
+      setIsResendingInvitation(false);
     }
   };
 
@@ -284,6 +316,7 @@ export default function TenantAdminsManagement() {
                 tenantsAdmin={filteredTenantAdmins}
                 onEdit={openEditModal}
                 onDeactivate={openDeactivateModal}
+                onResendInvitation={openResendInvitationModal}
               />
             </div>
           )}
@@ -323,6 +356,17 @@ export default function TenantAdminsManagement() {
         isConfirming={isDeactivating}
         onClose={closeDeactivateModal}
         onConfirm={() => void handleConfirmDeactivate()}
+      />
+
+      <ConfirmActionModal
+        isOpen={!!tenantAdminToResendInvitation}
+        title="Reenviar invitación"
+        description={`Se invalidarán las invitaciones anteriores de ${tenantAdminToResendInvitation?.email ?? 'este administrador'} y se enviará un nuevo enlace. Solo el enlace nuevo quedará válido.`}
+        checkboxLabel="Confirmo que deseo invalidar invitaciones anteriores y enviar una nueva."
+        confirmText="Reenviar invitación"
+        isConfirming={isResendingInvitation}
+        onClose={closeResendInvitationModal}
+        onConfirm={() => void handleConfirmResendInvitation()}
       />
     </section>
   );

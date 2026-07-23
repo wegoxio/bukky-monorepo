@@ -196,6 +196,7 @@ export class NotificationsService {
   }): Promise<void> {
     const appPublicUrl = this.getAppPublicUrl();
     const assetBaseUrl = this.resolveMailAssetBaseUrl(appPublicUrl);
+    const brandLogoUrl = this.resolveMailBrandLogoUrl(appPublicUrl);
     const business = await this.buildAccessEmailBusinessContext(input.tenantId);
 
     const rendered = buildTenantAdminInvitationEmail({
@@ -204,6 +205,7 @@ export class NotificationsService {
       expiresAt: input.expiresAt,
       appPublicUrl,
       assetBaseUrl,
+      brandLogoUrl,
       business,
     });
 
@@ -232,6 +234,7 @@ export class NotificationsService {
   }): Promise<void> {
     const appPublicUrl = this.getAppPublicUrl();
     const assetBaseUrl = this.resolveMailAssetBaseUrl(appPublicUrl);
+    const brandLogoUrl = this.resolveMailBrandLogoUrl(appPublicUrl);
     const business = await this.buildAccessEmailBusinessContext(input.tenantId ?? null);
 
     const rendered = buildPasswordResetEmail({
@@ -240,6 +243,7 @@ export class NotificationsService {
       expiresAt: input.expiresAt,
       appPublicUrl,
       assetBaseUrl,
+      brandLogoUrl,
       business,
     });
 
@@ -510,6 +514,26 @@ export class NotificationsService {
     }
 
     return appPublicUrl.replace(/\/+$/, '');
+  }
+
+  private resolveMailBrandLogoUrl(appPublicUrl: string): string {
+    const configuredLogoUrl = this.configService.get<string>('MAIL_BRAND_LOGO_URL')?.trim();
+    const logoUrl =
+      configuredLogoUrl ||
+      new URL(
+        '/bukky-logo-white.svg',
+        appPublicUrl.endsWith('/') ? appPublicUrl : `${appPublicUrl}/`,
+      )
+        .toString()
+        .trim();
+
+    const parsed = new URL(logoUrl);
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      throw new Error('MAIL_BRAND_LOGO_URL must use http or https.');
+    }
+
+    parsed.hash = '';
+    return parsed.toString();
   }
 
   private normalizeMailAssetBaseUrl(value: string): string {

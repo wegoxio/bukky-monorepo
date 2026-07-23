@@ -44,4 +44,9 @@ export class UsersController {
   ) {
     return this.usersService.updateTenantAdmin(id, data, currentUser);
   }
+
+  @Post('tenant-admins/:id/resend-invitation')
+  resendTenantAdminInvitation(@Param('id') id: string, @CurrentUser() currentUser: CurrentJwtUser) {
+    return this.usersService.resendTenantAdminInvitation(id, currentUser);
+  }
 }

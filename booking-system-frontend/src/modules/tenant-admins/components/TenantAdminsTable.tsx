@@ -1,4 +1,4 @@
-import { Ban, Hash, Pencil, UserRound } from 'lucide-react';
+import { Ban, Hash, MailPlus, Pencil, UserRound } from 'lucide-react';
 import { Avatar } from '@/modules/employees/components/components/Avatar';
 import { TenantAdmin } from '@/types/tenant-admin.types';
 
@@ -6,6 +6,7 @@ interface TenantsAdminTableProps {
   tenantsAdmin: TenantAdmin[];
   onEdit: (tenantAdmin: TenantAdmin) => void;
   onDeactivate: (tenantAdmin: TenantAdmin) => void;
+  onResendInvitation: (tenantAdmin: TenantAdmin) => void;
 }
 
 function resolveStatus(tenant: TenantAdmin): {
@@ -43,12 +44,14 @@ export default function TenantsAdminsTable({
   tenantsAdmin,
   onEdit,
   onDeactivate,
+  onResendInvitation,
 }: TenantsAdminTableProps): React.ReactNode {
   return (
     <div className="mt-4">
       <div className="space-y-3 md:hidden">
         {tenantsAdmin.map((tenant) => {
           const status = resolveStatus(tenant);
+          const canResendInvitation = tenant.is_active && tenant.access_state !== 'ACTIVE';
 
           return (
             <article
@@ -82,7 +85,7 @@ export default function TenantsAdminsTable({
                 </span>
               </div>
 
-              <div className="mt-3 grid grid-cols-2 gap-2">
+              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
                 <button
                   type="button"
                   onClick={() => onEdit(tenant)}
@@ -90,6 +93,15 @@ export default function TenantsAdminsTable({
                 >
                   <Pencil className="h-3.5 w-3.5" />
                   Editar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onResendInvitation(tenant)}
+                  disabled={!canResendInvitation}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-border-info bg-surface-info px-3 py-2 text-xs font-medium text-info transition-colors hover:bg-info/10 disabled:cursor-not-allowed disabled:opacity-55"
+                >
+                  <MailPlus className="h-3.5 w-3.5" />
+                  Reenviar
                 </button>
                 <button
                   type="button"
@@ -120,6 +132,7 @@ export default function TenantsAdminsTable({
           <tbody>
             {tenantsAdmin.map((tenant) => {
               const status = resolveStatus(tenant);
+              const canResendInvitation = tenant.is_active && tenant.access_state !== 'ACTIVE';
 
               return (
                 <tr key={tenant.id} className="text-primary shadow-theme-row">
@@ -160,6 +173,15 @@ export default function TenantsAdminsTable({
                       >
                         <Pencil className="h-3.5 w-3.5" />
                         Editar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onResendInvitation(tenant)}
+                        disabled={!canResendInvitation}
+                        className="inline-flex items-center gap-2 rounded-xl border border-border-info bg-surface-info px-3 py-2 text-xs font-medium text-info transition-colors hover:bg-info/10 disabled:cursor-not-allowed disabled:opacity-55"
+                      >
+                        <MailPlus className="h-3.5 w-3.5" />
+                        Reenviar
                       </button>
                       <button
                         type="button"

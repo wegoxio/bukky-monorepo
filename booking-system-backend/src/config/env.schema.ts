@@ -175,6 +175,7 @@ export const envSchema = z
     MAIL_FROM_EMAIL: z.string().email().optional(),
     MAIL_FROM_NAME: z.string().min(1).default('Bukky Booking'),
     MAIL_REPLY_TO_EMAIL: z.string().email().optional(),
+    MAIL_BRAND_LOGO_URL: z.preprocess(parseOptionalString, z.string().url().optional()),
     MAIL_ASSET_BASE_URL: z
       .preprocess(parseOptionalString, z.string().url().optional())
       .refine(isNotCloudFrontUrl, {

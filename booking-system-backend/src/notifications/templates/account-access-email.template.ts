@@ -38,66 +38,6 @@ function withAlpha(hex: string, alpha: number): string {
   return `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`;
 }
 
-function appendCacheBuster(url: string, version: string): string {
-  if (!url || url.startsWith('data:')) {
-    return url;
-  }
-
-  try {
-    const parsed = new URL(url);
-    parsed.searchParams.set('v', version);
-    return parsed.toString();
-  } catch {
-    return url;
-  }
-}
-
-function toAbsoluteUrl(url: string, appPublicUrl: string): string {
-  const normalizedUrl = url.trim();
-  if (!normalizedUrl) {
-    return '';
-  }
-
-  try {
-    return new URL(normalizedUrl).toString();
-  } catch {
-    return new URL(
-      normalizedUrl.startsWith('/') ? normalizedUrl : `/${normalizedUrl}`,
-      appPublicUrl.endsWith('/') ? appPublicUrl : `${appPublicUrl}/`,
-    ).toString();
-  }
-}
-
-function resolveLogoUrl(input: {
-  business: BookingNotificationBusinessContext | null;
-  assetBaseUrl: string;
-  appPublicUrl: string;
-}): string {
-  const business = input.business;
-  const logoKey = business?.logoKey?.replace(/^\/+/, '') ?? '';
-
-  if (logoKey && input.assetBaseUrl) {
-    return appendCacheBuster(`${input.assetBaseUrl}/${logoKey}`, business?.settingsUpdatedAt ?? '');
-  }
-
-  const brandingLogo = business?.branding.logoUrl?.trim() || '/bukky-logo.svg';
-  return appendCacheBuster(
-    toAbsoluteUrl(brandingLogo, input.appPublicUrl),
-    business?.settingsUpdatedAt ?? '',
-  );
-}
-
-function initialsFromName(value: string): string {
-  const initials = value
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? '')
-    .join('');
-
-  return initials || 'B';
-}
-
 type AccountAccessEmailTemplateInput = {
   businessName: string;
   preheader: string;
@@ -110,6 +50,7 @@ type AccountAccessEmailTemplateInput = {
   supportLabel: string;
   appPublicUrl: string;
   assetBaseUrl: string;
+  brandLogoUrl: string;
   business: BookingNotificationBusinessContext | null;
 };
 
@@ -125,13 +66,6 @@ export function buildAccountAccessEmail(input: AccountAccessEmailTemplateInput):
   const tertiary = business?.theme.tertiary || '#6b7280';
   const textPrimary = business?.theme.textPrimary || '#1f2937';
   const textSecondary = business?.theme.textSecondary || '#4b5563';
-  const appName = business?.branding.appName?.trim() || 'Bukky';
-  const logoUrl = resolveLogoUrl({
-    business,
-    assetBaseUrl: input.assetBaseUrl,
-    appPublicUrl: input.appPublicUrl,
-  });
-  const logoFallback = initialsFromName(appName);
 
   const escapedBusinessName = escapeHtml(input.businessName);
   const escapedEyebrow = escapeHtml(input.eyebrow);
@@ -141,9 +75,8 @@ export function buildAccountAccessEmail(input: AccountAccessEmailTemplateInput):
   const escapedActionUrl = escapeHtml(input.actionUrl);
   const escapedExpiryLabel = escapeHtml(input.expiryLabel);
   const escapedSupportLabel = escapeHtml(input.supportLabel);
-  const escapedAppName = escapeHtml(appName);
-  const escapedLogoUrl = escapeHtml(logoUrl);
-  const escapedLogoFallback = escapeHtml(logoFallback);
+  const escapedAppPublicUrl = escapeHtml(input.appPublicUrl);
+  const escapedBrandLogoUrl = escapeHtml(input.brandLogoUrl);
 
   const html = `
   <!doctype html>
@@ -160,28 +93,17 @@ export function buildAccountAccessEmail(input: AccountAccessEmailTemplateInput):
           <td align="center">
             <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border-radius:28px;overflow:hidden;border:1px solid ${escapeHtml(withAlpha(primary, 0.18))};box-shadow:0 28px 72px rgba(17,24,39,0.12);">
               <tr>
-                <td style="padding:18px 28px;background:#111827;color:#ffffff;">
-                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
-                    <tr>
-                      <td style="vertical-align:middle;">
-                        <table role="presentation" cellspacing="0" cellpadding="0">
-                          <tr>
-                            <td style="width:34px;height:34px;border-radius:12px;background:${escapeHtml(primary)};text-align:center;vertical-align:middle;overflow:hidden;">
-                              ${
-                                logoUrl
-                                  ? `<img src="${escapedLogoUrl}" alt="${escapedAppName}" width="34" height="34" style="display:block;width:34px;height:34px;object-fit:contain;border-radius:12px;background:#ffffff;" />`
-                                  : `<span style="display:inline-block;padding-top:8px;font-size:15px;font-weight:800;color:#ffffff;">${escapedLogoFallback}</span>`
-                              }
-                            </td>
-                            <td style="padding-left:12px;font-size:14px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;color:#ffffff;">${escapedAppName}</td>
-                          </tr>
-                        </table>
-                      </td>
-                      <td align="right" style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:rgba(255,255,255,0.72);">
-                        ${escapedBusinessName}
-                      </td>
-                    </tr>
-                  </table>
+                <td align="center" style="padding:22px 28px;background:#111827;color:#ffffff;text-align:center;">
+                  <a href="${escapedAppPublicUrl}" style="display:inline-block;text-decoration:none;">
+                    ${
+                      input.brandLogoUrl
+                        ? `<img src="${escapedBrandLogoUrl}" alt="Bukky" width="178" height="36" style="display:block;width:178px;height:auto;max-width:178px;margin:0 auto;border:0;outline:none;text-decoration:none;" />`
+                        : `<span style="display:inline-block;font-size:15px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;color:#ffffff;">BUKKY</span>`
+                    }
+                  </a>
+                  <div style="margin-top:12px;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:rgba(255,255,255,0.72);">
+                    ${escapedBusinessName}
+                  </div>
                 </td>
               </tr>
               <tr>
@@ -205,6 +127,12 @@ export function buildAccountAccessEmail(input: AccountAccessEmailTemplateInput):
                     </p>
                     <a href="${escapedActionUrl}" style="display:inline-block;padding:15px 24px;border-radius:16px;background:${escapeHtml(primary)};color:#ffffff;text-decoration:none;font-size:14px;font-weight:800;box-shadow:0 14px 30px ${escapeHtml(withAlpha(primary, 0.28))};">
                       ${escapedActionLabel}
+                    </a>
+                    <p style="margin:18px 0 8px;font-size:12px;line-height:1.65;color:${escapeHtml(textSecondary)};">
+                      Si el bot&oacute;n no abre, copia y pega este enlace en tu navegador:
+                    </p>
+                    <a href="${escapedActionUrl}" style="display:block;font-size:12px;line-height:1.65;color:${escapeHtml(primary)};text-decoration:underline;word-break:break-all;">
+                      ${escapedActionUrl}
                     </a>
                     <p style="margin:18px 0 0;font-size:13px;line-height:1.7;color:${escapeHtml(tertiary)};">
                       ${escapedExpiryLabel}
@@ -269,6 +197,7 @@ export function buildTenantAdminInvitationEmail(input: {
   expiresAt: Date;
   appPublicUrl: string;
   assetBaseUrl: string;
+  brandLogoUrl: string;
   business: BookingNotificationBusinessContext | null;
 }): {
   subject: string;
@@ -288,6 +217,7 @@ export function buildTenantAdminInvitationEmail(input: {
       'Si el enlace expira, puedes usar la opción "Olvidé mi contraseña" para recibir uno nuevo.',
     appPublicUrl: input.appPublicUrl,
     assetBaseUrl: input.assetBaseUrl,
+    brandLogoUrl: input.brandLogoUrl,
     business: input.business,
   });
 }
@@ -298,6 +228,7 @@ export function buildPasswordResetEmail(input: {
   expiresAt: Date;
   appPublicUrl: string;
   assetBaseUrl: string;
+  brandLogoUrl: string;
   business: BookingNotificationBusinessContext | null;
 }): {
   subject: string;
@@ -318,6 +249,7 @@ export function buildPasswordResetEmail(input: {
       'Si no pediste este cambio, ignora este mensaje y tu acceso actual no se modificará.',
     appPublicUrl: input.appPublicUrl,
     assetBaseUrl: input.assetBaseUrl,
+    brandLogoUrl: input.brandLogoUrl,
     business: input.business,
   });
 }

@@ -78,6 +78,20 @@ export class AccountAccessService {
     });
   }
 
+  async resendTenantAdminInvitation(
+    user: User,
+    requestedBy: CurrentJwtUser,
+  ): Promise<{ expires_at: Date }> {
+    const freshUser = await this.loadUserWithTenant(user.id);
+    return this.sendTenantAdminSetupLink(freshUser, {
+      requestedByUserId: requestedBy.sub,
+      auditAction: 'TENANT_ADMIN_INVITATION_RESENT',
+      auditMetadata: {
+        requested_by_user_id: requestedBy.sub,
+      },
+    });
+  }
+
   async requestPasswordRecovery(
     email: string,
     context?: AuthRequestContext,
@@ -404,6 +418,10 @@ export class AccountAccessService {
       ),
     });
 
+    await this.usersRepo.update(freshUser.id, {
+      invited_at: new Date(),
+    });
+
     await this.auditService.log({
       actor_user_id: input.requestedByUserId ?? freshUser.id,
       tenant_id: freshUser.tenant_id ?? null,
@@ -553,7 +571,8 @@ export class AccountAccessService {
       !user.tenant_id ||
       !user.tenant ||
       !user.tenant.is_active ||
-      user.email !== expectedEmail
+      user.email !== expectedEmail ||
+      (!!user.password_hash && !!user.onboarding_completed_at)
     ) {
       throw new UnauthorizedException('Enlace inválido o expirado.');
     }

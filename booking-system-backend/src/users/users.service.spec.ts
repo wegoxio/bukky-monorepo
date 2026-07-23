@@ -103,6 +103,7 @@ function createServiceTestBed(initialUser: User) {
   };
   const accountAccessService = {
     issueTenantAdminInvitation: jest.fn().mockResolvedValue({ expires_at: new Date() }),
+    resendTenantAdminInvitation: jest.fn().mockResolvedValue({ expires_at: new Date() }),
   };
 
   const service = new UserService(
@@ -198,5 +199,48 @@ describe('UsersService', () => {
     expect(bed.getStoredUser().token_version).toBe(3);
     expect(bed.authSessionsRepo.update).not.toHaveBeenCalled();
     expect(bed.accountAccessService.issueTenantAdminInvitation).not.toHaveBeenCalled();
+  });
+
+  it('resends invitation for tenant admin pending setup', async () => {
+    const pendingAdmin = makeTenantAdmin({
+      password_hash: null,
+      email_verified_at: null,
+      onboarding_completed_at: null,
+    });
+    const bed = createServiceTestBed(pendingAdmin);
+
+    const result = await bed.service.resendTenantAdminInvitation('tenant-admin-id', currentUser);
+
+    expect(result.access_state).toBe('INVITED');
+    expect(bed.accountAccessService.resendTenantAdminInvitation).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'tenant-admin-id', email: 'admin@example.com' }),
+      currentUser,
+    );
+  });
+
+  it('does not resend invitation for tenant admin that already completed access', async () => {
+    const bed = createServiceTestBed(makeTenantAdmin());
+
+    await expect(
+      bed.service.resendTenantAdminInvitation('tenant-admin-id', currentUser),
+    ).rejects.toThrow('Este administrador ya completó su acceso.');
+
+    expect(bed.accountAccessService.resendTenantAdminInvitation).not.toHaveBeenCalled();
+  });
+
+  it('does not resend invitation for inactive tenant admin', async () => {
+    const pendingInactiveAdmin = makeTenantAdmin({
+      is_active: false,
+      password_hash: null,
+      email_verified_at: null,
+      onboarding_completed_at: null,
+    });
+    const bed = createServiceTestBed(pendingInactiveAdmin);
+
+    await expect(
+      bed.service.resendTenantAdminInvitation('tenant-admin-id', currentUser),
+    ).rejects.toThrow('No se puede reenviar invitación a un administrador inactivo.');
+
+    expect(bed.accountAccessService.resendTenantAdminInvitation).not.toHaveBeenCalled();
   });
 });

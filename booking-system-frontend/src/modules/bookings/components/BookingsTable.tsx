@@ -1,7 +1,9 @@
+import * as Popover from '@radix-ui/react-popover';
 import type { Booking, BookingStatus } from '@/types/booking.types';
 import { getPhoneDisplay } from '@/modules/phone/utils/phone';
 import Avatar from '@/modules/ui/Avatar';
 import type { SelectOption } from '@/modules/ui/SelectField';
+import { useState } from 'react';
 import {
   CalendarClock,
   CalendarPlus,
@@ -138,6 +140,99 @@ function formatMinutes(minutes: number) {
   return `${hours}h ${remaining}m`;
 }
 
+type BookingActionsMenuProps = {
+  booking: Booking;
+  updatingBookingId: string | null;
+  triggerClassName: string;
+  onStatusChange: (booking: Booking, status: BookingStatus) => void;
+  onReschedule: (booking: Booking) => void;
+};
+
+function BookingActionsMenu({
+  booking,
+  updatingBookingId,
+  triggerClassName,
+  onStatusChange,
+  onReschedule,
+}: BookingActionsMenuProps): React.ReactNode {
+  const [isOpen, setIsOpen] = useState(false);
+  const quickActions = buildQuickActions(booking.status);
+  const isUpdating = updatingBookingId === booking.id;
+
+  const handleReschedule = () => {
+    if (isUpdating) return;
+    setIsOpen(false);
+    onReschedule(booking);
+  };
+
+  const handleStatusChange = (status: BookingStatus) => {
+    if (isUpdating) return;
+    setIsOpen(false);
+    onStatusChange(booking, status);
+  };
+
+  return (
+    <Popover.Root open={isOpen} onOpenChange={setIsOpen}>
+      <Popover.Trigger asChild>
+        <button type="button" className={triggerClassName}>
+          <MoreVertical className="h-3 w-3" />
+          Gestionar
+        </button>
+      </Popover.Trigger>
+
+      {isOpen ? (
+        <Popover.Portal>
+          <Popover.Content
+            side="bottom"
+            align="end"
+            sideOffset={8}
+            collisionPadding={12}
+            className="z-[95] max-h-[min(22rem,var(--radix-popover-content-available-height))] w-56 overflow-y-auto rounded-2xl border border-border-soft bg-surface p-2 shadow-theme-card"
+          >
+            {['PENDING', 'CONFIRMED'].includes(booking.status) ? (
+              <button
+                type="button"
+                disabled={isUpdating}
+                onClick={handleReschedule}
+                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-medium text-fg hover:bg-surface-soft disabled:opacity-50"
+              >
+                <CalendarPlus className="h-3.5 w-3.5" />
+                Reprogramar
+              </button>
+            ) : null}
+
+            {quickActions.map((action) => (
+              <button
+                key={action.status}
+                type="button"
+                disabled={isUpdating}
+                onClick={() => handleStatusChange(action.status)}
+                className={`mt-1 w-full rounded-xl border px-3 py-2 text-left text-xs font-medium disabled:opacity-50 ${action.toneClass}`}
+              >
+                {action.label}
+              </button>
+            ))}
+
+            {buildStatusOptions(booking.status)
+              .filter((option) => option.value !== booking.status)
+              .map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  disabled={isUpdating}
+                  onClick={() => handleStatusChange(option.value as BookingStatus)}
+                  className="mt-1 w-full rounded-xl px-3 py-2 text-left text-xs font-medium text-fg hover:bg-surface-soft disabled:opacity-50"
+                >
+                  {option.label}
+                </button>
+              ))}
+          </Popover.Content>
+        </Popover.Portal>
+      ) : null}
+    </Popover.Root>
+  );
+}
+
 export default function BookingsTable({
   bookings,
   updatingBookingId,
@@ -156,7 +251,6 @@ export default function BookingsTable({
             e164: booking.customer_phone_e164,
           });
           const contactDisplay = booking.customer_email ?? customerPhoneDisplay ?? 'Sin contacto';
-          const quickActions = buildQuickActions(booking.status);
 
           return (
             <article
@@ -245,49 +339,13 @@ export default function BookingsTable({
                   <Eye className="h-3 w-3" />
                   Ver detalle
                 </button>
-                <details className="relative">
-                  <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded-xl border border-border bg-surface px-3 py-1.5 text-xs font-medium text-fg">
-                    <MoreVertical className="h-3 w-3" />
-                    Gestionar
-                  </summary>
-                  <div className="absolute right-0 z-20 mt-2 w-52 rounded-2xl border border-border-soft bg-surface p-2 shadow-theme-card">
-                    {['PENDING', 'CONFIRMED'].includes(booking.status) ? (
-                      <button
-                        type="button"
-                        disabled={updatingBookingId === booking.id}
-                        onClick={() => onReschedule(booking)}
-                        className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-medium text-fg hover:bg-surface-soft disabled:opacity-50"
-                      >
-                        <CalendarPlus className="h-3.5 w-3.5" />
-                        Reprogramar
-                      </button>
-                    ) : null}
-                    {quickActions.map((action) => (
-                      <button
-                        key={action.status}
-                        type="button"
-                        disabled={updatingBookingId === booking.id}
-                        onClick={() => onStatusChange(booking, action.status)}
-                        className={`mt-1 w-full rounded-xl border px-3 py-2 text-left text-xs font-medium disabled:opacity-50 ${action.toneClass}`}
-                      >
-                        {action.label}
-                      </button>
-                    ))}
-                    {buildStatusOptions(booking.status)
-                      .filter((option) => option.value !== booking.status)
-                      .map((option) => (
-                        <button
-                          key={option.value}
-                          type="button"
-                          disabled={updatingBookingId === booking.id}
-                          onClick={() => onStatusChange(booking, option.value as BookingStatus)}
-                          className="mt-1 w-full rounded-xl px-3 py-2 text-left text-xs font-medium text-fg hover:bg-surface-soft disabled:opacity-50"
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                  </div>
-                </details>
+                <BookingActionsMenu
+                  booking={booking}
+                  updatingBookingId={updatingBookingId}
+                  triggerClassName="inline-flex items-center gap-1 rounded-xl border border-border bg-surface px-3 py-1.5 text-xs font-medium text-fg"
+                  onReschedule={onReschedule}
+                  onStatusChange={onStatusChange}
+                />
               </div>
             </article>
           );
@@ -318,7 +376,6 @@ export default function BookingsTable({
               });
               const contactDisplay =
                 booking.customer_email ?? customerPhoneDisplay ?? 'Sin contacto';
-              const quickActions = buildQuickActions(booking.status);
 
               return (
                 <tr key={booking.id} className="text-primary shadow-theme-row">
@@ -412,51 +469,13 @@ export default function BookingsTable({
                         <Eye className="h-3 w-3" />
                         Detalle
                       </button>
-                      <details className="relative">
-                        <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[11px] font-medium text-fg transition hover:bg-surface-soft">
-                          <MoreVertical className="h-3 w-3" />
-                          Gestionar
-                        </summary>
-                        <div className="absolute right-0 z-20 mt-2 w-56 rounded-2xl border border-border-soft bg-surface p-2 shadow-theme-card">
-                          {['PENDING', 'CONFIRMED'].includes(booking.status) ? (
-                            <button
-                              type="button"
-                              disabled={updatingBookingId === booking.id}
-                              onClick={() => onReschedule(booking)}
-                              className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-medium text-fg hover:bg-surface-soft disabled:opacity-50"
-                            >
-                              <CalendarPlus className="h-3.5 w-3.5" />
-                              Reprogramar
-                            </button>
-                          ) : null}
-                          {quickActions.map((action) => (
-                            <button
-                              key={action.status}
-                              type="button"
-                              disabled={updatingBookingId === booking.id}
-                              onClick={() => onStatusChange(booking, action.status)}
-                              className={`mt-1 w-full rounded-xl border px-3 py-2 text-left text-xs font-medium disabled:opacity-50 ${action.toneClass}`}
-                            >
-                              {action.label}
-                            </button>
-                          ))}
-                          {buildStatusOptions(booking.status)
-                            .filter((option) => option.value !== booking.status)
-                            .map((option) => (
-                              <button
-                                key={option.value}
-                                type="button"
-                                disabled={updatingBookingId === booking.id}
-                                onClick={() =>
-                                  onStatusChange(booking, option.value as BookingStatus)
-                                }
-                                className="mt-1 w-full rounded-xl px-3 py-2 text-left text-xs font-medium text-fg hover:bg-surface-soft disabled:opacity-50"
-                              >
-                                {option.label}
-                              </button>
-                            ))}
-                        </div>
-                      </details>
+                      <BookingActionsMenu
+                        booking={booking}
+                        updatingBookingId={updatingBookingId}
+                        triggerClassName="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[11px] font-medium text-fg transition hover:bg-surface-soft"
+                        onReschedule={onReschedule}
+                        onStatusChange={onStatusChange}
+                      />
                     </div>
                   </td>
                 </tr>

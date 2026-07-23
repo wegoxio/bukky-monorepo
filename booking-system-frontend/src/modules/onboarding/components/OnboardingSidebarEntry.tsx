@@ -3,9 +3,13 @@
 import { useAuth } from '@/context/AuthContext';
 import { getOnboardingModulesForRole } from '@/modules/onboarding/config/onboarding-modules';
 import { onboardingService } from '@/modules/onboarding/services/onboarding.service';
+import {
+  getOnboardingProgressChangedDetail,
+  ONBOARDING_PROGRESS_CHANGED_EVENT,
+} from '@/modules/onboarding/utils/onboarding-progress-events';
 import type { OnboardingProgressItem } from '@/types/onboarding.types';
 import { BookOpenCheck, ChevronRight, LoaderCircle } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 function getProgressKey(item: OnboardingProgressItem): string {
   return `${item.module_key}:${item.version}`;
@@ -15,6 +19,19 @@ export default function OnboardingSidebarEntry() {
   const { token, user } = useAuth();
   const [completedModules, setCompletedModules] = useState<OnboardingProgressItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+
+  const upsertCompletedModule = useCallback((completedModule: OnboardingProgressItem) => {
+    setCompletedModules((current) => {
+      const next = current.filter(
+        (item) =>
+          !(
+            item.module_key === completedModule.module_key &&
+            item.version === completedModule.version
+          ),
+      );
+      return [...next, completedModule];
+    });
+  }, []);
 
   const modules = useMemo(() => {
     if (!user) return [];
@@ -28,46 +45,61 @@ export default function OnboardingSidebarEntry() {
 
   const progressPercent = modules.length ? Math.round((completedCount / modules.length) * 100) : 0;
 
-  useEffect(() => {
-    if (!token || !user || modules.length === 0) return;
+  const loadProgress = useCallback(
+    async (options?: { silent?: boolean }) => {
+      if (!token || !user || modules.length === 0) return;
+      if (!options?.silent) {
+        setIsLoading(true);
+      }
 
-    let isMounted = true;
-    setIsLoading(true);
-
-    onboardingService
-      .getProgress(token)
-      .then((response) => {
-        if (!isMounted) return;
+      try {
+        const response = await onboardingService.getProgress(token);
         setCompletedModules(response.modules);
-      })
-      .catch(() => {
-        if (!isMounted) return;
-        setCompletedModules([]);
-      })
-      .finally(() => {
-        if (!isMounted) return;
-        setIsLoading(false);
-      });
+      } catch {
+        if (!options?.silent) {
+          setCompletedModules([]);
+        }
+      } finally {
+        if (!options?.silent) {
+          setIsLoading(false);
+        }
+      }
+    },
+    [modules.length, token, user],
+  );
+
+  useEffect(() => {
+    let isMounted = true;
+
+    void (async () => {
+      if (!isMounted) return;
+      await loadProgress();
+    })();
 
     return () => {
       isMounted = false;
     };
-  }, [modules.length, token, user]);
+  }, [loadProgress]);
 
   useEffect(() => {
-    const handleProgressChanged = () => {
+    const handleProgressChanged = (event: Event) => {
       if (!token) return;
-      onboardingService
-        .getProgress(token)
-        .then((response) => setCompletedModules(response.modules))
-        .catch(() => setCompletedModules([]));
+      const detail = getOnboardingProgressChangedDetail(event);
+      if (detail?.reset) {
+        setCompletedModules([]);
+      }
+      if (detail?.completedModule) {
+        upsertCompletedModule(detail.completedModule);
+      }
+
+      void loadProgress({ silent: true });
     };
 
-    window.addEventListener('bukky-onboarding:progress-changed', handleProgressChanged);
+    window.addEventListener(ONBOARDING_PROGRESS_CHANGED_EVENT, handleProgressChanged);
     return () => {
-      window.removeEventListener('bukky-onboarding:progress-changed', handleProgressChanged);
+      window.removeEventListener(ONBOARDING_PROGRESS_CHANGED_EVENT, handleProgressChanged);
     };
-  }, [token]);
+  }, [loadProgress, token, upsertCompletedModule]);
 
   if (!user || modules.length === 0) return null;
 

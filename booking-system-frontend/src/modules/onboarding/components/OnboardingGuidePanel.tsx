@@ -7,6 +7,8 @@ import {
   type OnboardingModule,
 } from '@/modules/onboarding/config/onboarding-modules';
 import { onboardingService } from '@/modules/onboarding/services/onboarding.service';
+import { consumeOnboardingAutoStart } from '@/modules/onboarding/utils/onboarding-auto-start';
+import { emitOnboardingProgressChanged } from '@/modules/onboarding/utils/onboarding-progress-events';
 import type { OnboardingProgressItem } from '@/types/onboarding.types';
 import type { Driver, DriveStep } from 'driver.js';
 import {
@@ -33,21 +35,33 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-async function waitForAnyTourTarget(selectors: string[]): Promise<boolean> {
-  for (let attempt = 0; attempt < 16; attempt += 1) {
-    const hasTarget = selectors.some((selector) => Boolean(document.querySelector(selector)));
-    if (hasTarget) return true;
-    await wait(160);
-  }
-
-  return false;
-}
-
 function filterAvailableSteps(steps: DriveStep[]): DriveStep[] {
   return steps.filter((step) => {
     if (!step.element || typeof step.element !== 'string') return true;
     return Boolean(document.querySelector(step.element));
   });
+}
+
+function isElementStep(step: DriveStep): boolean {
+  return typeof step.element === 'string';
+}
+
+async function waitForAvailableTourSteps(steps: DriveStep[]): Promise<DriveStep[]> {
+  const expectedElementStepCount = steps.filter(isElementStep).length;
+  let latestAvailableSteps = filterAvailableSteps(steps);
+
+  for (let attempt = 0; attempt < 28; attempt += 1) {
+    latestAvailableSteps = filterAvailableSteps(steps);
+    const availableElementStepCount = latestAvailableSteps.filter(isElementStep).length;
+
+    if (expectedElementStepCount === 0 || availableElementStepCount >= expectedElementStepCount) {
+      return latestAvailableSteps;
+    }
+
+    await wait(180);
+  }
+
+  return latestAvailableSteps;
 }
 
 function getProgressKey(module: OnboardingModule): string {
@@ -60,12 +74,14 @@ export default function OnboardingGuidePanel() {
   const { token, user } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [isLoadingProgress, setIsLoadingProgress] = useState(false);
+  const [hasLoadedProgress, setHasLoadedProgress] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [runningModuleKey, setRunningModuleKey] = useState<string | null>(null);
   const [completedModules, setCompletedModules] = useState<OnboardingProgressItem[]>([]);
   const driverRef = useRef<Driver | null>(null);
   const pendingModuleRef = useRef<OnboardingModule | null>(null);
   const runningModuleRef = useRef<OnboardingModule | null>(null);
+  const autoStartAttemptedRef = useRef(false);
   const pathnameRef = useRef(pathname);
 
   const modules = useMemo(() => {
@@ -86,6 +102,7 @@ export default function OnboardingGuidePanel() {
   const loadProgress = useCallback(async () => {
     if (!token) return;
     setIsLoadingProgress(true);
+    setHasLoadedProgress(false);
     try {
       const response = await onboardingService.getProgress(token);
       setCompletedModules(response.modules);
@@ -95,22 +112,20 @@ export default function OnboardingGuidePanel() {
       toast.error(message);
     } finally {
       setIsLoadingProgress(false);
+      setHasLoadedProgress(true);
     }
   }, [token]);
 
-  const completeModuleLocally = useCallback((module: OnboardingModule, completedAt: string) => {
+  const upsertCompletedModule = useCallback((completedModule: OnboardingProgressItem) => {
     setCompletedModules((current) => {
       const next = current.filter(
-        (item) => !(item.module_key === module.key && item.version === module.version),
+        (item) =>
+          !(
+            item.module_key === completedModule.module_key &&
+            item.version === completedModule.version
+          ),
       );
-      return [
-        ...next,
-        {
-          module_key: module.key,
-          version: module.version,
-          completed_at: completedAt,
-        },
-      ];
+      return [...next, completedModule];
     });
   }, []);
 
@@ -119,13 +134,18 @@ export default function OnboardingGuidePanel() {
       if (!token) return;
       try {
         const response = await onboardingService.completeModule(token, module.key, module.version);
-        completeModuleLocally(module, response.completed_at);
-        window.dispatchEvent(new CustomEvent('bukky-onboarding:progress-changed'));
+        const completedModule: OnboardingProgressItem = {
+          module_key: response.module_key,
+          version: response.version,
+          completed_at: response.completed_at,
+        };
+        upsertCompletedModule(completedModule);
+        emitOnboardingProgressChanged({ completedModule });
       } catch {
         toast.error('El recorrido terminó, pero no se pudo guardar el progreso.');
       }
     },
-    [completeModuleLocally, token],
+    [token, upsertCompletedModule],
   );
 
   const startDriverForModule = useCallback(
@@ -135,13 +155,7 @@ export default function OnboardingGuidePanel() {
         return;
       }
 
-      const hasTarget = await waitForAnyTourTarget(module.targetSelectors);
-      if (!hasTarget) {
-        toast.error('No se encontraron los elementos necesarios para iniciar este recorrido.');
-        return;
-      }
-
-      const availableSteps = filterAvailableSteps(module.steps);
+      const availableSteps = await waitForAvailableTourSteps(module.steps);
       if (availableSteps.length === 0) {
         toast.error('Este recorrido todavía no tiene elementos visibles en la vista actual.');
         return;
@@ -168,13 +182,9 @@ export default function OnboardingGuidePanel() {
         nextBtnText: 'Siguiente',
         prevBtnText: 'Anterior',
         doneBtnText: 'Completar',
-        onPopoverRender: (popover, options) => {
-          const isLastStep = options.state.activeIndex === availableSteps.length - 1;
-          popover.nextButton.onclick = () => {
-            if (isLastStep) {
-              completedByDoneButton = true;
-            }
-          };
+        onDoneClick: (_element, _step, options) => {
+          completedByDoneButton = true;
+          options.driver.destroy();
         },
         onDestroyed: () => {
           const completedModule = runningModuleRef.current;
@@ -215,7 +225,7 @@ export default function OnboardingGuidePanel() {
     try {
       await onboardingService.resetProgress(token);
       setCompletedModules([]);
-      window.dispatchEvent(new CustomEvent('bukky-onboarding:progress-changed'));
+      emitOnboardingProgressChanged({ reset: true });
       toast.success('Progreso de la guía reiniciado.');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo reiniciar el progreso.';
@@ -238,9 +248,33 @@ export default function OnboardingGuidePanel() {
   }, [pathname, startDriverForModule]);
 
   useEffect(() => {
-    if (!token || !user) return;
+    if (!token || !user) {
+      setCompletedModules([]);
+      setHasLoadedProgress(false);
+      return;
+    }
     void loadProgress();
   }, [loadProgress, token, user]);
+
+  useEffect(() => {
+    autoStartAttemptedRef.current = false;
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!token || !user || modules.length === 0 || !hasLoadedProgress) return;
+    if (autoStartAttemptedRef.current) return;
+    if (!isDesktopViewport()) return;
+
+    if (!consumeOnboardingAutoStart(user.id)) return;
+    autoStartAttemptedRef.current = true;
+
+    const firstIncompleteModule = modules.find(
+      (module) => !completedKeys.has(getProgressKey(module)),
+    );
+    if (!firstIncompleteModule) return;
+
+    void openModule(firstIncompleteModule);
+  }, [completedKeys, hasLoadedProgress, modules, openModule, token, user]);
 
   useEffect(() => {
     const handleOpen = () => setIsOpen(true);

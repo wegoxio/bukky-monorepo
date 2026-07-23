@@ -41,6 +41,7 @@ export type CurrentJwtUser = {
 
 export type AuthAccessTokenResponse = {
   access_token: string;
+  first_login?: boolean;
 };
 
 export type AuthMfaChallengeResponse = {
@@ -61,4 +62,5 @@ export type AuthTokensBundle = {
   refresh_token: string;
   csrf_token: string;
   refresh_expires_at: Date;
+  first_login: boolean;
 };

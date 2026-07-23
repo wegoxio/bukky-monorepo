@@ -19,14 +19,20 @@ type ServiceEditModalContentProps = {
 const BASE_DURATION_OPTIONS = [15, 30, 45, 60, 75, 90, 120, 150, 180];
 const BASE_CAPACITY_OPTIONS = Array.from({ length: 10 }, (_, index) => index + 1);
 const BASE_CURRENCY_OPTIONS = ['USD', 'EUR', 'DOP', 'MXN', 'COP'];
+type CapacityPatch = Pick<
+  ServiceFormState,
+  'capacity' | 'min_capacity' | 'max_capacity' | 'min_party_size' | 'max_party_size' | 'slot_capacity'
+>;
 
 function buildNumberOptions(
   baseValues: number[],
   currentValue: number,
   labelFormatter: (value: number) => string,
 ): SelectOption[] {
-  const values = new Set(baseValues);
-  values.add(currentValue);
+  const values = new Set(baseValues.filter((value) => Number.isInteger(value) && value > 0));
+  if (Number.isInteger(currentValue) && currentValue > 0) {
+    values.add(currentValue);
+  }
 
   return Array.from(values)
     .sort((a, b) => a - b)
@@ -34,6 +40,58 @@ function buildNumberOptions(
       value: String(value),
       label: labelFormatter(value),
     }));
+}
+
+function toPositiveInteger(value: string, fallback: number): number {
+  const normalizedFallback = Number.isInteger(fallback) && fallback > 0 ? fallback : 1;
+  const parsedValue = Number(value);
+  return Number.isInteger(parsedValue) && parsedValue > 0 ? parsedValue : normalizedFallback;
+}
+
+function buildCapacityPatch(
+  minPartySize: number,
+  maxPartySize: number,
+  slotCapacity: number,
+): CapacityPatch {
+  const normalizedMinPartySize = Math.max(1, minPartySize);
+  const normalizedMaxPartySize = Math.max(normalizedMinPartySize, maxPartySize);
+  const normalizedSlotCapacity = Math.max(normalizedMaxPartySize, slotCapacity);
+
+  return {
+    min_party_size: normalizedMinPartySize,
+    max_party_size: normalizedMaxPartySize,
+    slot_capacity: normalizedSlotCapacity,
+    min_capacity: normalizedMinPartySize,
+    max_capacity: normalizedMaxPartySize,
+    capacity: normalizedSlotCapacity,
+  };
+}
+
+function buildMinPartySizePatch(value: string, previous: ServiceFormState): CapacityPatch {
+  const nextMinPartySize = toPositiveInteger(value, previous.min_party_size);
+  const nextMaxPartySize = Math.max(previous.max_party_size, nextMinPartySize);
+  return buildCapacityPatch(
+    nextMinPartySize,
+    nextMaxPartySize,
+    Math.max(previous.slot_capacity, nextMaxPartySize),
+  );
+}
+
+function buildMaxPartySizePatch(value: string, previous: ServiceFormState): CapacityPatch {
+  const nextMaxPartySize = toPositiveInteger(value, previous.max_party_size);
+  const nextMinPartySize = Math.min(Math.max(1, previous.min_party_size), nextMaxPartySize);
+  return buildCapacityPatch(
+    nextMinPartySize,
+    nextMaxPartySize,
+    Math.max(previous.slot_capacity, nextMaxPartySize),
+  );
+}
+
+function buildSlotCapacityPatch(value: string, previous: ServiceFormState): CapacityPatch {
+  const nextSlotCapacity = toPositiveInteger(value, previous.slot_capacity);
+  const nextMaxPartySize = Math.min(Math.max(1, previous.max_party_size), nextSlotCapacity);
+  const nextMinPartySize = Math.min(Math.max(1, previous.min_party_size), nextMaxPartySize);
+  return buildCapacityPatch(nextMinPartySize, nextMaxPartySize, nextSlotCapacity);
 }
 
 function buildCurrencyOptions(currentValue: string): SelectOption[] {
@@ -62,6 +120,13 @@ export default function ServiceEditModalContent({
   onEmployeeSearchChange,
   onEmployeeToggle,
 }: ServiceEditModalContentProps): React.ReactNode {
+  const capacityState = buildCapacityPatch(
+    form.min_party_size,
+    form.max_party_size,
+    form.slot_capacity,
+  );
+  const { min_party_size: minPartySize, max_party_size: maxPartySize } = capacityState;
+  const slotCapacity = capacityState.slot_capacity;
   const durationOptions = buildNumberOptions(
     BASE_DURATION_OPTIONS,
     form.duration_minutes,
@@ -69,7 +134,7 @@ export default function ServiceEditModalContent({
   );
   const capacityOptions = buildNumberOptions(
     BASE_CAPACITY_OPTIONS,
-    Math.max(form.min_party_size, form.max_party_size, form.slot_capacity),
+    Math.max(minPartySize, maxPartySize, slotCapacity),
     (value) => `${value} persona${value === 1 ? '' : 's'}`,
   );
   const currencyOptions = buildCurrencyOptions(form.currency);
@@ -114,7 +179,7 @@ export default function ServiceEditModalContent({
             onValueChange={(value) =>
               onFormChange((prev) => ({
                 ...prev,
-                duration_minutes: Number(value),
+                duration_minutes: toPositiveInteger(value, prev.duration_minutes),
               }))
             }
             options={durationOptions}
@@ -126,15 +191,11 @@ export default function ServiceEditModalContent({
             Mín. personas
           </label>
           <SelectField
-            value={String(form.min_party_size)}
+            value={String(minPartySize)}
             onValueChange={(value) => {
-              const nextMinCapacity = Number(value);
               onFormChange((prev) => ({
                 ...prev,
-                min_party_size: nextMinCapacity,
-                max_party_size: Math.max(prev.max_party_size, nextMinCapacity),
-                slot_capacity: Math.max(prev.slot_capacity, prev.max_party_size, nextMinCapacity),
-                min_capacity: nextMinCapacity,
+                ...buildMinPartySizePatch(value, prev),
               }));
             }}
             options={capacityOptions}
@@ -146,15 +207,11 @@ export default function ServiceEditModalContent({
             Máx. personas
           </label>
           <SelectField
-            value={String(form.max_party_size)}
+            value={String(maxPartySize)}
             onValueChange={(value) => {
-              const nextMaxCapacity = Number(value);
               onFormChange((prev) => ({
                 ...prev,
-                max_party_size: nextMaxCapacity,
-                min_party_size: Math.min(prev.min_party_size, nextMaxCapacity),
-                slot_capacity: Math.max(prev.slot_capacity, nextMaxCapacity),
-                max_capacity: nextMaxCapacity,
+                ...buildMaxPartySizePatch(value, prev),
               }));
             }}
             options={capacityOptions}
@@ -164,14 +221,11 @@ export default function ServiceEditModalContent({
         <div className="space-y-1.5">
           <label className="text-sm font-medium text-fg-label">Capacidad total del horario</label>
           <SelectField
-            value={String(form.slot_capacity)}
+            value={String(slotCapacity)}
             onValueChange={(value) => {
-              const slotCapacity = Number(value);
               onFormChange((prev) => ({
                 ...prev,
-                slot_capacity: slotCapacity,
-                max_party_size: Math.min(prev.max_party_size, slotCapacity),
-                capacity: slotCapacity,
+                ...buildSlotCapacityPatch(value, prev),
               }));
             }}
             options={capacityOptions}

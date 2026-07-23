@@ -9,6 +9,7 @@ import {
   syncCsrfTokenFromCookie,
 } from '@/modules/auth/services/auth-session.service';
 import { refreshAccessTokenWithStoredRefreshToken } from '@/modules/http/services/api';
+import { queueOnboardingAutoStart } from '@/modules/onboarding/utils/onboarding-auto-start';
 import {
   AuthMfaChallengeResponse,
   CompleteMfaLoginPayload,
@@ -48,14 +49,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoggingOut, setIsLoggingOut] = useState<boolean>(false);
   const hasInitializedRef = useRef(false);
 
-  const completeAccessLogin = useCallback(async (accessToken: string) => {
-    setAccessToken(accessToken);
-    syncCsrfTokenFromCookie();
+  const completeAccessLogin = useCallback(
+    async (accessToken: string, options?: { autoStartOnboarding?: boolean }) => {
+      setAccessToken(accessToken);
+      syncCsrfTokenFromCookie();
 
-    const me = await authService.getAuthenticatedUser(accessToken);
-    setUser(me);
-    toast.success(`Bienvenido, ${me.name}.`);
-  }, []);
+      const me = await authService.getAuthenticatedUser(accessToken);
+      if (options?.autoStartOnboarding) {
+        queueOnboardingAutoStart(me.id);
+      }
+      setUser(me);
+      toast.success(`Bienvenido, ${me.name}.`);
+    },
+    [],
+  );
 
   const logout = useCallback(async () => {
     setIsLoggingOut(true);
@@ -109,7 +116,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return response;
         }
 
-        await completeAccessLogin(response.access_token);
+        await completeAccessLogin(response.access_token, {
+          autoStartOnboarding: response.first_login === true,
+        });
         return null;
       } catch (error) {
         const message = error instanceof Error ? error.message : 'No se pudo iniciar sesión.';
@@ -127,7 +136,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIsLoading(true);
       try {
         const response = await authService.completeMfaLogin(payload);
-        await completeAccessLogin(response.access_token);
+        await completeAccessLogin(response.access_token, {
+          autoStartOnboarding: response.first_login === true,
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'No se pudo verificar el código.';
         toast.error(message);

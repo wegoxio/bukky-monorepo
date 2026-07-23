@@ -72,7 +72,7 @@ export class AuthController {
       tokens.csrf_token,
     );
 
-    return { access_token: tokens.access_token };
+    return { access_token: tokens.access_token, first_login: tokens.first_login };
   }
 
   @Post('login/mfa')
@@ -99,7 +99,7 @@ export class AuthController {
       tokens.csrf_token,
     );
 
-    return { access_token: tokens.access_token };
+    return { access_token: tokens.access_token, first_login: tokens.first_login };
   }
 
   @Post('refresh')

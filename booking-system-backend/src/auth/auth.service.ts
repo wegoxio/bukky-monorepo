@@ -202,9 +202,12 @@ export class AuthService {
       return this.createMfaChallenge(validatedUser, normalizedContext);
     }
 
+    const isFirstLogin = !validatedUser.last_login_at;
     const updatedUser = await this.resetLoginSecurityState(validatedUser.id);
 
-    const { tokens, session } = await this.createSessionTokens(updatedUser, normalizedContext);
+    const { tokens, session } = await this.createSessionTokens(updatedUser, normalizedContext, {
+      firstLogin: isFirstLogin,
+    });
 
     await this.auditService.log({
       actor_user_id: updatedUser.id,
@@ -596,11 +599,14 @@ export class AuthService {
     challenge.used_at = new Date();
     await this.authMfaChallengesRepo.save(challenge);
 
+    const isFirstLogin = !user.last_login_at;
     const updatedUser = await this.resetLoginSecurityState(user.id);
     updatedUser.mfa_last_used_at = new Date();
     await this.usersRepo.save(updatedUser);
 
-    const { tokens, session } = await this.createSessionTokens(updatedUser, normalizedContext);
+    const { tokens, session } = await this.createSessionTokens(updatedUser, normalizedContext, {
+      firstLogin: isFirstLogin,
+    });
 
     await this.auditService.log({
       actor_user_id: updatedUser.id,
@@ -1537,8 +1543,12 @@ export class AuthService {
   private async createSessionTokens(
     user: User,
     context: NormalizedAuthRequestContext,
-    manager?: EntityManager,
+    optionsOrManager?: { firstLogin?: boolean } | EntityManager,
   ): Promise<{ tokens: AuthTokensBundle; session: AuthSession }> {
+    const manager =
+      optionsOrManager && 'getRepository' in optionsOrManager ? optionsOrManager : undefined;
+    const options =
+      optionsOrManager && !('getRepository' in optionsOrManager) ? optionsOrManager : undefined;
     const sessionRepo = (manager ?? this.authSessionsRepo.manager).getRepository(AuthSession);
     const now = new Date();
 
@@ -1577,6 +1587,7 @@ export class AuthService {
         refresh_token: refreshToken,
         csrf_token: csrfToken,
         refresh_expires_at: session.expires_at,
+        first_login: options?.firstLogin === true,
       },
     };
   }

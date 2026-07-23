@@ -29,6 +29,7 @@ export interface CompleteTenantAdminOnboardingPayload {
 
 export interface AuthAccessTokenResponse {
   access_token: string;
+  first_login?: boolean;
 }
 
 export interface AuthMfaChallengeResponse {

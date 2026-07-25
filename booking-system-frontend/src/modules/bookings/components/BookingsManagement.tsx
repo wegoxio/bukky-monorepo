@@ -588,7 +588,6 @@ export default function BookingsManagement() {
           booking.id,
           {
             start_at_utc: startAtUtc,
-            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           },
           token,
         );
@@ -660,7 +659,6 @@ export default function BookingsManagement() {
             employee_id: booking.employee_id,
             service_ids: serviceIds,
             date,
-            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
             party_size: booking.party_size,
           },
           token,
@@ -731,6 +729,19 @@ export default function BookingsManagement() {
       setModalError('Selecciona un horario disponible para reprogramar la cita.');
       return;
     }
+    const selectedAvailability = pendingReschedule.slots.find(
+      (slot) => slot.start_at_utc === pendingReschedule.selectedSlotStartAt,
+    );
+    if (
+      selectedAvailability &&
+      selectedAvailability.available_capacity < pendingReschedule.booking.party_size
+    ) {
+      setPendingReschedule((current) =>
+        current ? { ...current, selectedSlotStartAt: '' } : current,
+      );
+      setModalError(`Este horario solo tiene ${selectedAvailability.available_capacity} cupo(s).`);
+      return;
+    }
 
     setIsRescheduling(true);
     setModalError('');
@@ -741,7 +752,6 @@ export default function BookingsManagement() {
         pendingReschedule.booking.id,
         {
           start_at_utc: pendingReschedule.selectedSlotStartAt,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         },
         token,
       );
@@ -1163,7 +1173,7 @@ export default function BookingsManagement() {
         }
         helperText="Solo se muestran horarios disponibles para el mismo servicio y profesional."
         errorMessage={modalError || pendingReschedule?.errorMessage}
-        submitText={isRescheduling ? 'Reprogramando...' : 'Guardar nueva fecha'}
+        submitText={isRescheduling ? 'Reprogramando...' : 'Reprogramar'}
         isSubmitting={isRescheduling}
         maxWidthClassName="max-w-3xl"
         onClose={closeRescheduleModal}
@@ -1212,11 +1222,15 @@ export default function BookingsManagement() {
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                   {pendingReschedule.slots.map((slot) => {
                     const isSelected = pendingReschedule.selectedSlotStartAt === slot.start_at_utc;
+                    const hasEnoughCapacity =
+                      slot.available_capacity >= pendingReschedule.booking.party_size;
                     return (
                       <button
                         key={slot.start_at_utc}
                         type="button"
+                        disabled={!hasEnoughCapacity}
                         onClick={() => {
+                          if (!hasEnoughCapacity) return;
                           setPendingReschedule((current) =>
                             current
                               ? { ...current, selectedSlotStartAt: slot.start_at_utc }
@@ -1227,11 +1241,15 @@ export default function BookingsManagement() {
                         className={`rounded-2xl border px-3 py-3 text-left text-sm transition ${
                           isSelected
                             ? 'border-accent bg-accent text-accent-text'
-                            : 'border-border bg-surface text-fg hover:border-accent'
+                            : !hasEnoughCapacity
+                              ? 'border-border-soft bg-surface-soft text-muted opacity-70'
+                              : 'border-border bg-surface text-fg hover:border-accent'
                         }`}
                       >
                         <span className="block font-semibold">{formatSlotRange(slot)}</span>
-                        <span className="mt-1 block text-xs text-muted">
+                        <span
+                          className={`mt-1 block text-xs text-muted ${isSelected ? 'text-white' : ''}`}
+                        >
                           Cupos disponibles: {slot.available_capacity}
                         </span>
                       </button>

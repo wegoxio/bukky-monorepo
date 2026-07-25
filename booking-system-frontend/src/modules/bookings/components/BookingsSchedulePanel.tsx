@@ -65,6 +65,31 @@ const INITIAL_TIME_OFF_FORM: TimeOffFormState = {
   reason: '',
 };
 
+const FALLBACK_SCHEDULE_TIMEZONE = 'UTC';
+const COMMON_SCHEDULE_TIMEZONES = [
+  'Europe/Paris',
+  'Europe/Madrid',
+  'America/Caracas',
+  'America/Santo_Domingo',
+  'America/Bogota',
+  'America/Mexico_City',
+  'America/New_York',
+  FALLBACK_SCHEDULE_TIMEZONE,
+];
+
+function getBrowserTimezone() {
+  if (typeof Intl === 'undefined') return FALLBACK_SCHEDULE_TIMEZONE;
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || FALLBACK_SCHEDULE_TIMEZONE;
+}
+
+function getScheduleTimezoneOptions(currentTimezone: string): string[] {
+  return [
+    ...new Set(
+      [currentTimezone, getBrowserTimezone(), ...COMMON_SCHEDULE_TIMEZONES].filter(Boolean),
+    ),
+  ];
+}
+
 function createRow(partial?: Partial<IntervalRow>): IntervalRow {
   return {
     row_id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -182,7 +207,7 @@ export default function BookingsSchedulePanel({
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
 
-  const [scheduleTimezone, setScheduleTimezone] = useState('UTC');
+  const [scheduleTimezone, setScheduleTimezone] = useState(getBrowserTimezone);
   const [workingRows, setWorkingRows] = useState<IntervalRow[]>([createRow()]);
   const [breakRows, setBreakRows] = useState<IntervalRow[]>([]);
   const [scheduleSnapshot, setScheduleSnapshot] = useState<EmployeeScheduleResponse | null>(null);
@@ -210,6 +235,10 @@ export default function BookingsSchedulePanel({
   );
   const hasSavedWorkingHours = savedWorkingByDay.length > 0;
   const hasSavedBreaks = savedBreaksByDay.length > 0;
+  const scheduleTimezoneOptions = useMemo(
+    () => getScheduleTimezoneOptions(scheduleTimezone),
+    [scheduleTimezone],
+  );
 
   const loadSchedule = useCallback(async () => {
     if (!token || !selectedEmployeeId) return;
@@ -219,7 +248,7 @@ export default function BookingsSchedulePanel({
     try {
       const schedule = await bookingsService.getEmployeeSchedule(selectedEmployeeId, token);
       setScheduleSnapshot(schedule);
-      setScheduleTimezone(schedule.schedule_timezone || 'UTC');
+      setScheduleTimezone(schedule.schedule_timezone || getBrowserTimezone());
       setWorkingRows(
         schedule.working_hours.length > 0
           ? schedule.working_hours.map((interval) =>
@@ -273,6 +302,7 @@ export default function BookingsSchedulePanel({
       setScheduleSnapshot(null);
       setWorkingRows([createRow()]);
       setBreakRows([]);
+      setScheduleTimezone(getBrowserTimezone());
       setTimeOffForm(INITIAL_TIME_OFF_FORM);
       setErrorMessage('');
       setSuccessMessage('');
@@ -532,6 +562,27 @@ export default function BookingsSchedulePanel({
         </div>
       ) : (
         <div className="mt-4 space-y-5">
+          <div className="rounded-2xl border border-border-soft bg-surface p-4">
+            <label className="block space-y-2">
+              <span className="text-sm font-semibold text-fg-strong">Zona horaria</span>
+              <select
+                value={scheduleTimezone}
+                onChange={(event) => setScheduleTimezone(event.target.value)}
+                className="w-full rounded-2xl border border-border bg-surface-soft px-3 py-2.5 text-sm text-fg"
+              >
+                {scheduleTimezoneOptions.map((timezone) => (
+                  <option key={timezone} value={timezone}>
+                    {timezone}
+                  </option>
+                ))}
+              </select>
+              <span className="block text-xs text-muted">
+                Las horas laborales, descansos y bloqueos de este profesional se interpretan en esta
+                zona.
+              </span>
+            </label>
+          </div>
+
           <div className="space-y-3 rounded-2xl border border-border-soft bg-surface p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>

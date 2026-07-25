@@ -105,10 +105,7 @@ export default function ManualBookingComposer({
   );
   const selectedService = selectedServices[0];
   const partySizeOptions = selectedService
-    ? Array.from(
-        { length: selectedService.max_party_size - selectedService.min_party_size + 1 },
-        (_, index) => selectedService.min_party_size + index,
-      )
+    ? Array.from({ length: Math.max(1, selectedService.max_party_size) }, (_, index) => index + 1)
     : [];
 
   const isReadyToSubmit =

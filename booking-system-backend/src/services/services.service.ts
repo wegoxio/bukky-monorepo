@@ -311,17 +311,16 @@ export class ServicesService {
     >,
     existing?: Service,
   ): CapacityConfig {
-    const minPartySize =
-      dto.min_party_size ??
-      dto.min_capacity ??
-      existing?.min_party_size ??
-      existing?.min_capacity ??
-      1;
+    const minPartySize = 1;
     const maxPartySize =
       dto.max_party_size ??
       dto.max_capacity ??
+      dto.min_party_size ??
+      dto.min_capacity ??
       existing?.max_party_size ??
       existing?.max_capacity ??
+      existing?.min_party_size ??
+      existing?.min_capacity ??
       minPartySize;
     const slotCandidate =
       dto.slot_capacity ??
@@ -334,7 +333,7 @@ export class ServicesService {
 
     if (maxPartySize < minPartySize || slotCapacity < maxPartySize) {
       throw new BadRequestException(
-        'La capacidad máxima debe ser mayor o igual a la capacidad mínima.',
+        'La capacidad por reserva debe ser positiva y no puede superar la capacidad total del horario.',
       );
     }
 

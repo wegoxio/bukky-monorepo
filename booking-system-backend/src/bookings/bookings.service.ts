@@ -751,10 +751,13 @@ export class BookingsService {
     const cancellationReason = dto.cancellation_reason?.trim() || null;
     const isCancellationStatus = this.isCancellationStatus(nextStatus);
     const result = await this.dataSource.transaction(async (manager) => {
-      const booking = await manager.getRepository(Booking).findOne({
-        where: { id, tenant_id: tenantId },
-        lock: { mode: 'pessimistic_write' },
-      });
+      const booking = await manager
+        .getRepository(Booking)
+        .createQueryBuilder('booking')
+        .setLock('pessimistic_write', undefined, ['booking'])
+        .where('booking.id = :id', { id })
+        .andWhere('booking.tenant_id = :tenantId', { tenantId })
+        .getOne();
       if (!booking) {
         throw new NotFoundException('No se encontrÃ³ la cita');
       }
@@ -987,7 +990,7 @@ export class BookingsService {
       const lockedBooking = await manager
         .getRepository(Booking)
         .createQueryBuilder('booking')
-        .setLock('pessimistic_write')
+        .setLock('pessimistic_write', undefined, ['booking'])
         .leftJoinAndSelect('booking.items', 'items')
         .where('booking.id = :id', { id })
         .andWhere('booking.tenant_id = :tenantId', { tenantId })
@@ -1028,7 +1031,7 @@ export class BookingsService {
       const overlappingBookings = await manager
         .getRepository(Booking)
         .createQueryBuilder('booking')
-        .setLock('pessimistic_write')
+        .setLock('pessimistic_write', undefined, ['booking'])
         .leftJoinAndSelect('booking.items', 'items')
         .where('booking.tenant_id = :tenantId', { tenantId })
         .andWhere('booking.employee_id = :employeeId', {
@@ -1766,10 +1769,9 @@ export class BookingsService {
         };
       })
       .filter((slot) =>
-        this.hasCapacityForRequestedSlot({
+        this.hasAnyRemainingCapacityForSlot({
           bookings: sameServiceBookings,
           serviceId: selectedServiceId,
-          partySize,
           maxCapacity: slotCapacity,
           startAt: new Date(slot.start_at_utc.getTime() - bufferBeforeMinutes * 60 * 1000),
           endAt: new Date(slot.end_at_utc.getTime() + bufferAfterMinutes * 60 * 1000),
@@ -1882,10 +1884,6 @@ export class BookingsService {
     return partySize;
   }
 
-  private getServiceMinCapacity(service: Service): number {
-    return service.min_party_size ?? service.min_capacity ?? 1;
-  }
-
   private getServiceMaxCapacity(service: Service): number {
     return service.max_party_size ?? service.max_capacity ?? 1;
   }
@@ -1895,12 +1893,11 @@ export class BookingsService {
   }
 
   private assertPartySizeAllowed(service: Service, partySize: number): void {
-    const minCapacity = this.getServiceMinCapacity(service);
     const maxCapacity = this.getServiceMaxCapacity(service);
 
-    if (partySize < minCapacity || partySize > maxCapacity) {
+    if (partySize > maxCapacity) {
       throw new BadRequestException(
-        `Este servicio permite reservas entre ${minCapacity} y ${maxCapacity} persona(s).`,
+        `Este servicio permite reservas de hasta ${maxCapacity} persona(s).`,
       );
     }
   }
@@ -1911,6 +1908,48 @@ export class BookingsService {
 
   private intervalsOverlap(left: Interval, right: Interval): boolean {
     return left.start.getTime() < right.end.getTime() && left.end.getTime() > right.start.getTime();
+  }
+
+  private hasAnyRemainingCapacityForSlot(input: {
+    bookings: Booking[];
+    serviceId: string;
+    maxCapacity: number;
+    startAt: Date;
+    endAt: Date;
+    sessionStartAt: Date;
+    sessionEndAt: Date;
+  }): boolean {
+    let usedCapacity = 0;
+
+    for (const booking of input.bookings) {
+      if (
+        !this.intervalsOverlap(
+          {
+            start: booking.busy_start_at_utc ?? booking.start_at_utc,
+            end: booking.busy_end_at_utc ?? booking.end_at_utc,
+          },
+          { start: input.startAt, end: input.endAt },
+        )
+      ) {
+        continue;
+      }
+
+      const sameService = this.bookingIncludesService(booking, input.serviceId);
+      const sameSession =
+        booking.start_at_utc.getTime() === input.sessionStartAt.getTime() &&
+        booking.end_at_utc.getTime() === input.sessionEndAt.getTime();
+
+      if (!sameService || !sameSession) {
+        return false;
+      }
+
+      usedCapacity += booking.party_size ?? 1;
+      if (usedCapacity >= input.maxCapacity) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   private hasCapacityForRequestedSlot(input: {

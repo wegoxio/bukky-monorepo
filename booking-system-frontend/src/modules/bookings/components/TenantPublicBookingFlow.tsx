@@ -257,10 +257,7 @@ export default function TenantPublicBookingFlow({ tenantSlug }: TenantPublicBook
   );
   const selectedService = selectedServices[0];
   const partySizeOptions = selectedService
-    ? Array.from(
-        { length: selectedService.max_party_size - selectedService.min_party_size + 1 },
-        (_, index) => selectedService.min_party_size + index,
-      )
+    ? Array.from({ length: Math.max(1, selectedService.max_party_size) }, (_, index) => index + 1)
     : [];
 
   const selectedEmployee = useMemo(
@@ -346,7 +343,12 @@ export default function TenantPublicBookingFlow({ tenantSlug }: TenantPublicBook
       setRequiredDurationMinutes(availability.required_duration_minutes);
       setAvailabilityTimezone(availability.timezone);
       setSelectedSlotStart((prev) =>
-        prev && availability.slots.some((slot) => slot.start_at_utc === prev) ? prev : null,
+        prev &&
+        availability.slots.some(
+          (slot) => slot.start_at_utc === prev && slot.available_capacity >= partySize,
+        )
+          ? prev
+          : null,
       );
     } catch (error) {
       setSlots([]);
@@ -440,9 +442,8 @@ export default function TenantPublicBookingFlow({ tenantSlug }: TenantPublicBook
 
   const handleToggleService = (serviceId: string) => {
     const isSelected = selectedServiceIds.includes(serviceId);
-    const nextService = activeServices.find((service) => service.id === serviceId);
     setSelectedServiceIds(isSelected ? [] : [serviceId]);
-    setPartySize(isSelected ? 1 : (nextService?.min_party_size ?? 1));
+    setPartySize(1);
     setEligibleEmployees([]);
     setSelectedEmployeeId('');
     setSlots([]);
@@ -536,9 +537,15 @@ export default function TenantPublicBookingFlow({ tenantSlug }: TenantPublicBook
     }
     if (
       selectedService &&
-      (partySize < selectedService.min_party_size || partySize > selectedService.max_party_size)
+      (partySize < 1 || partySize > selectedService.max_party_size)
     ) {
       setErrorMessage('El número de personas no es válido para el servicio.');
+      return;
+    }
+
+    if (selectedSlot && selectedSlot.available_capacity < partySize) {
+      setErrorMessage(`Este horario solo tiene ${selectedSlot.available_capacity} cupo(s).`);
+      setSelectedSlotStart(null);
       return;
     }
 
@@ -830,9 +837,7 @@ export default function TenantPublicBookingFlow({ tenantSlug }: TenantPublicBook
                               </p>
                               <div className="mt-2 flex flex-wrap gap-1.5">
                                 <span className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] text-fg-secondary">
-                                  {service.min_party_size === service.max_party_size
-                                    ? `${service.max_party_size} ${service.max_party_size === 1 ? 'persona' : 'personas'}`
-                                    : `${service.min_party_size}-${service.max_party_size} personas`}
+                                  Hasta {service.max_party_size} por reserva
                                 </span>
                                 <span className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] text-fg-secondary">
                                   {service.slot_capacity} plazas por horario
@@ -991,15 +996,21 @@ export default function TenantPublicBookingFlow({ tenantSlug }: TenantPublicBook
                           <div className="grid max-h-72 grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-4">
                             {slots.map((slot) => {
                               const isSelected = slot.start_at_utc === selectedSlotStart;
+                              const hasEnoughCapacity = slot.available_capacity >= partySize;
                               return (
                                 <button
                                   key={slot.start_at_utc}
                                   type="button"
-                                  onClick={() => setSelectedSlotStart(slot.start_at_utc)}
+                                  disabled={!hasEnoughCapacity}
+                                  onClick={() => {
+                                    if (hasEnoughCapacity) setSelectedSlotStart(slot.start_at_utc);
+                                  }}
                                   className={`rounded-xl border px-2.5 py-2 text-xs font-medium transition ${
                                     isSelected
                                       ? 'border-accent bg-accent text-accent-text'
-                                      : 'border-border-soft bg-surface text-fg-secondary hover:bg-surface-muted'
+                                      : !hasEnoughCapacity
+                                        ? 'border-border-soft bg-surface-soft text-muted opacity-70'
+                                        : 'border-border-soft bg-surface text-fg-secondary hover:bg-surface-muted'
                                   }`}
                                 >
                                   {formatSlotTime(slot.start_at_utc, availabilityTimezone)}
@@ -1161,8 +1172,9 @@ export default function TenantPublicBookingFlow({ tenantSlug }: TenantPublicBook
                           {createdBooking ? (
                             <div className="mt-1 space-y-1 text-sm text-fg-secondary">
                               <p>
-                                {formatSlotDate(createdBooking.start_at_utc)} -{' '}
-                                {formatSlotTime(createdBooking.start_at_utc)}
+                                {formatSlotDate(createdBooking.start_at_utc, availabilityTimezone)}{' '}
+                                -{' '}
+                                {formatSlotTime(createdBooking.start_at_utc, availabilityTimezone)}
                               </p>
                               <p>
                                 {createdBooking.party_size}{' '}

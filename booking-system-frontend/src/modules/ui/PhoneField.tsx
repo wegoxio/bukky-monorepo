@@ -8,6 +8,7 @@ import {
   normalizePhoneCountryIso2,
 } from '@/modules/phone/utils/phone';
 import PhoneCountrySelect from '@/modules/ui/PhoneCountrySelect';
+import { useEffect } from 'react';
 
 type PhoneFieldProps = {
   idPrefix: string;
@@ -50,6 +51,12 @@ export default function PhoneField({
     typeof onClear === 'function' &&
     (showLegacyNote || countryIso2.trim().length > 0 || nationalNumber.trim().length > 0);
 
+  useEffect(() => {
+    if (nationalNumber.trim().length > 0 && countryIso2.trim().length === 0) {
+      onCountryChange(DEFAULT_PHONE_COUNTRY_ISO2);
+    }
+  }, [countryIso2, nationalNumber, onCountryChange]);
+
   return (
     <div className={`space-y-1.5 ${wrapperClassName}`.trim()}>
       <div className="flex items-center justify-between gap-3">
@@ -83,9 +90,6 @@ export default function PhoneField({
           value={nationalNumber}
           onChange={(event) => {
             const nextValue = normalizePhoneDigits(event.target.value);
-            if (nextValue && !countryIso2.trim()) {
-              onCountryChange(DEFAULT_PHONE_COUNTRY_ISO2);
-            }
             onNationalNumberChange(nextValue);
           }}
           className={`h-12 w-full rounded-2xl border px-4 text-sm text-fg ${inputClassName}`.trim()}

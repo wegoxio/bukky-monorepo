@@ -117,7 +117,6 @@ export default function PublicBookingManageFlow({ token }: PublicBookingManageFl
     try {
       const availability = await bookingsService.getPublicBookingManagementAvailability(token, {
         date,
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       });
       setSlots(availability.slots);
       setSelectedSlot('');
@@ -141,6 +140,14 @@ export default function PublicBookingManageFlow({ token }: PublicBookingManageFl
 
   const handleReschedule = async () => {
     if (!selectedSlot || !booking) return;
+    const selectedAvailability = slots.find((slot) => slot.start_at_utc === selectedSlot);
+    if (selectedAvailability && selectedAvailability.available_capacity < booking.party_size) {
+      setSelectedSlot('');
+      setErrorMessage(
+        `Este horario solo tiene ${selectedAvailability.available_capacity} cupo(s).`,
+      );
+      return;
+    }
     if (isTurnstileEnabled && !captchaToken) {
       setErrorMessage('Completa la verificación de seguridad antes de continuar.');
       return;
@@ -151,7 +158,6 @@ export default function PublicBookingManageFlow({ token }: PublicBookingManageFl
     try {
       const payload = {
         start_at_utc: selectedSlot,
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         captcha_token: isTurnstileEnabled ? (captchaToken ?? undefined) : undefined,
       };
       const fingerprint = JSON.stringify(payload);
@@ -310,28 +316,37 @@ export default function PublicBookingManageFlow({ token }: PublicBookingManageFl
                     </p>
                   ) : slots.length > 0 ? (
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-                      {slots.map((slot) => (
-                        <button
-                          key={slot.start_at_utc}
-                          type="button"
-                          onClick={() => setSelectedSlot(slot.start_at_utc)}
-                          className={`rounded-2xl border px-3 py-3 text-left text-sm transition ${
-                            selectedSlot === slot.start_at_utc
-                              ? 'border-violet-500 bg-violet-50 text-violet-900'
-                              : 'border-slate-200 bg-white text-slate-700 hover:border-violet-300'
-                          }`}
-                        >
-                          <span className="flex items-center gap-1.5 font-semibold">
-                            <Clock3 className="h-4 w-4" />
-                            {formatSlotTime(slot.start_at_utc)}
-                          </span>
-                          <span className="mt-1 block text-xs text-slate-500">
-                            {slot.available_capacity === 1
-                              ? 'Queda 1 cupo'
-                              : `Quedan ${slot.available_capacity} cupos`}
-                          </span>
-                        </button>
-                      ))}
+                      {slots.map((slot) => {
+                        const hasEnoughCapacity =
+                          !booking || slot.available_capacity >= booking.party_size;
+                        return (
+                          <button
+                            key={slot.start_at_utc}
+                            type="button"
+                            disabled={!hasEnoughCapacity}
+                            onClick={() => {
+                              if (hasEnoughCapacity) setSelectedSlot(slot.start_at_utc);
+                            }}
+                            className={`rounded-2xl border px-3 py-3 text-left text-sm transition ${
+                              selectedSlot === slot.start_at_utc
+                                ? 'border-violet-500 bg-violet-50 text-violet-900'
+                                : !hasEnoughCapacity
+                                  ? 'border-slate-200 bg-slate-50 text-slate-400 opacity-70'
+                                  : 'border-slate-200 bg-white text-slate-700 hover:border-violet-300'
+                            }`}
+                          >
+                            <span className="flex items-center gap-1.5 font-semibold">
+                              <Clock3 className="h-4 w-4" />
+                              {formatSlotTime(slot.start_at_utc)}
+                            </span>
+                            <span className="mt-1 block text-xs text-slate-500">
+                              {slot.available_capacity === 1
+                                ? 'Queda 1 cupo'
+                                : `Quedan ${slot.available_capacity} cupos`}
+                            </span>
+                          </button>
+                        );
+                      })}
                     </div>
                   ) : (
                     <p className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">

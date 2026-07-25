@@ -109,10 +109,7 @@ export default function BookingComposer({
     ? calculateEstimatedTotal(selectedService.price, partySize, selectedService.pricing_model)
     : '0.00';
   const partySizeOptions = selectedService
-    ? Array.from(
-        { length: selectedService.max_party_size - selectedService.min_party_size + 1 },
-        (_, index) => selectedService.min_party_size + index,
-      )
+    ? Array.from({ length: Math.max(1, selectedService.max_party_size) }, (_, index) => index + 1)
     : [];
   const highestAllowedStep =
     selectedServiceIds.length === 0
@@ -274,15 +271,21 @@ export default function BookingComposer({
           <div className="grid max-h-56 grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3 lg:grid-cols-4">
             {slots.map((slot) => {
               const isSelected = slot.start_at_utc === selectedSlotStart;
+              const hasEnoughCapacity = slot.available_capacity >= partySize;
               return (
                 <button
                   key={slot.start_at_utc}
                   type="button"
-                  onClick={() => onSelectSlot(slot.start_at_utc)}
+                  disabled={!hasEnoughCapacity}
+                  onClick={() => {
+                    if (hasEnoughCapacity) onSelectSlot(slot.start_at_utc);
+                  }}
                   className={`rounded-xl border px-2.5 py-2 text-xs font-medium transition ${
                     isSelected
                       ? 'border-accent bg-accent text-accent-text'
-                      : 'border-border-soft bg-surface-soft text-fg-secondary hover:bg-surface-muted'
+                      : !hasEnoughCapacity
+                        ? 'border-border-soft bg-surface-soft text-muted opacity-70'
+                        : 'border-border-soft bg-surface-soft text-fg-secondary hover:bg-surface-muted'
                   }`}
                 >
                   {formatSlotTime(slot.start_at_utc, availabilityTimezone)}

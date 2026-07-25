@@ -38,8 +38,7 @@ export function ServicesList({
                   {service.pricing_model === 'PER_PERSON' ? ' / persona' : ' / reserva'}
                 </span>
                 <span className="rounded-full bg-surface-muted px-3 py-1.5 text-xs text-fg-secondary">
-                  {service.min_party_size}-{service.max_party_size} por reserva ·{' '}
-                  {service.slot_capacity} plazas
+                  Hasta {service.max_party_size} por reserva · {service.slot_capacity} plazas
                 </span>
                 <span
                   className={`rounded-full px-3 py-1.5 text-xs font-medium ${

@@ -1,4 +1,5 @@
 import * as Popover from '@radix-ui/react-popover';
+import { AnimatePresence, motion } from 'framer-motion';
 import type { Booking, BookingStatus } from '@/types/booking.types';
 import { getPhoneDisplay } from '@/modules/phone/utils/phone';
 import Avatar from '@/modules/ui/Avatar';
@@ -180,55 +181,77 @@ function BookingActionsMenu({
         </button>
       </Popover.Trigger>
 
-      {isOpen ? (
-        <Popover.Portal>
-          <Popover.Content
-            side="bottom"
-            align="end"
-            sideOffset={8}
-            collisionPadding={12}
-            className="z-[95] max-h-[min(22rem,var(--radix-popover-content-available-height))] w-56 overflow-y-auto rounded-2xl border border-border-soft bg-surface p-2 shadow-theme-card"
-          >
-            {['PENDING', 'CONFIRMED'].includes(booking.status) ? (
-              <button
-                type="button"
-                disabled={isUpdating}
-                onClick={handleReschedule}
-                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-medium text-fg hover:bg-surface-soft disabled:opacity-50"
+      <AnimatePresence>
+        {isOpen ? (
+          <Popover.Portal forceMount>
+            <Popover.Content
+              asChild
+              forceMount
+              side="bottom"
+              align="end"
+              sideOffset={8}
+              collisionPadding={12}
+            >
+              <motion.div
+                initial={{ opacity: 0, y: -6, scale: 0.94 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -4, scale: 0.96 }}
+                transition={{
+                  type: 'spring',
+                  stiffness: 520,
+                  damping: 34,
+                  mass: 0.7,
+                }}
+                style={{ transformOrigin: 'var(--radix-popover-content-transform-origin)' }}
+                className="z-[95] max-h-[min(22rem,var(--radix-popover-content-available-height))] w-56 overflow-y-auto rounded-2xl border border-border-soft bg-surface p-2 shadow-theme-card outline-none"
               >
-                <CalendarPlus className="h-3.5 w-3.5" />
-                Reprogramar
-              </button>
-            ) : null}
+                {booking.status === 'CONFIRMED' ? (
+                  <button
+                    type="button"
+                    disabled={isUpdating}
+                    onClick={handleReschedule}
+                    className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-medium text-fg hover:bg-surface-soft disabled:opacity-50"
+                  >
+                    <CalendarPlus className="h-3.5 w-3.5" />
+                    Reprogramar
+                  </button>
+                ) : null}
 
-            {quickActions.map((action) => (
-              <button
-                key={action.status}
-                type="button"
-                disabled={isUpdating}
-                onClick={() => handleStatusChange(action.status)}
-                className={`mt-1 w-full rounded-xl border px-3 py-2 text-left text-xs font-medium disabled:opacity-50 ${action.toneClass}`}
-              >
-                {action.label}
-              </button>
-            ))}
+                {quickActions.map((action) => (
+                  <button
+                    key={action.status}
+                    type="button"
+                    disabled={isUpdating}
+                    onClick={() => handleStatusChange(action.status)}
+                    className={`mt-1 w-full rounded-xl border px-3 py-2 text-left text-xs font-medium disabled:opacity-50 ${action.toneClass}`}
+                  >
+                    {action.label}
+                  </button>
+                ))}
 
-            {buildStatusOptions(booking.status)
-              .filter((option) => option.value !== booking.status)
-              .map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  disabled={isUpdating}
-                  onClick={() => handleStatusChange(option.value as BookingStatus)}
-                  className="mt-1 w-full rounded-xl px-3 py-2 text-left text-xs font-medium text-fg hover:bg-surface-soft disabled:opacity-50"
-                >
-                  {option.label}
-                </button>
-              ))}
-          </Popover.Content>
-        </Popover.Portal>
-      ) : null}
+                {buildStatusOptions(booking.status)
+                  .filter(
+                    (option) =>
+                      booking.status !== 'PENDING' &&
+                      option.value !== booking.status &&
+                      !quickActions.some((action) => action.status === option.value),
+                  )
+                  .map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      disabled={isUpdating}
+                      onClick={() => handleStatusChange(option.value as BookingStatus)}
+                      className="mt-1 w-full rounded-xl px-3 py-2 text-left text-xs font-medium text-fg hover:bg-surface-soft disabled:opacity-50"
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+              </motion.div>
+            </Popover.Content>
+          </Popover.Portal>
+        ) : null}
+      </AnimatePresence>
     </Popover.Root>
   );
 }

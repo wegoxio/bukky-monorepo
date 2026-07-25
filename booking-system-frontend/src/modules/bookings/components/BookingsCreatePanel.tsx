@@ -54,13 +54,9 @@ function isCancellationStatus(status: ManualBookingStatusSelection) {
   return status === 'CANCELLED' || status === 'NO_SHOW';
 }
 
-function getDefaultPartySize(service: Service | undefined) {
-  return service?.min_party_size ?? 1;
-}
-
 function isPartySizeAllowed(service: Service | undefined, partySize: number) {
   if (!service) return false;
-  return partySize >= service.min_party_size && partySize <= service.max_party_size;
+  return Number.isInteger(partySize) && partySize >= 1 && partySize <= service.max_party_size;
 }
 
 export default function BookingsCreatePanel({
@@ -272,7 +268,12 @@ export default function BookingsCreatePanel({
         setStrictRequiredDurationMinutes(availability.required_duration_minutes);
         setStrictAvailabilityTimezone(availability.timezone);
         setStrictSelectedSlotStart((prev) =>
-          prev && availability.slots.some((slot) => slot.start_at_utc === prev) ? prev : null,
+          prev &&
+          availability.slots.some(
+            (slot) => slot.start_at_utc === prev && slot.available_capacity >= strictPartySize,
+          )
+            ? prev
+            : null,
         );
       } catch (error) {
         if (isCancelled) return;
@@ -328,6 +329,17 @@ export default function BookingsCreatePanel({
     if (!token || !strictSelectedSlotStart) return;
     if (!isPartySizeAllowed(strictSelectedService, strictPartySize)) {
       setStrictErrorMessage('El número de personas no es válido para el servicio.');
+      return;
+    }
+
+    const selectedAvailability = strictSlots.find(
+      (slot) => slot.start_at_utc === strictSelectedSlotStart,
+    );
+    if (selectedAvailability && selectedAvailability.available_capacity < strictPartySize) {
+      setStrictSelectedSlotStart(null);
+      setStrictErrorMessage(
+        `Este horario solo tiene ${selectedAvailability.available_capacity} cupo(s).`,
+      );
       return;
     }
 
@@ -565,9 +577,8 @@ export default function BookingsCreatePanel({
           selectedServiceIds={strictSelectedServiceIds}
           onToggleService={(serviceId) => {
             const nextServiceIds = strictSelectedServiceIds.includes(serviceId) ? [] : [serviceId];
-            const nextService = activeServices.find((service) => service.id === serviceId);
             setStrictSelectedServiceIds(nextServiceIds);
-            setStrictPartySize(nextServiceIds.length === 0 ? 1 : getDefaultPartySize(nextService));
+            setStrictPartySize(1);
             setStrictSlots([]);
             setStrictRequiredDurationMinutes(null);
             setStrictAvailabilityTimezone(null);
@@ -622,9 +633,8 @@ export default function BookingsCreatePanel({
           selectedServiceIds={manualSelectedServiceIds}
           onToggleService={(serviceId) => {
             const nextServiceIds = manualSelectedServiceIds.includes(serviceId) ? [] : [serviceId];
-            const nextService = activeServices.find((service) => service.id === serviceId);
             setManualSelectedServiceIds(nextServiceIds);
-            setManualPartySize(nextServiceIds.length === 0 ? 1 : getDefaultPartySize(nextService));
+            setManualPartySize(1);
           }}
           eligibleEmployees={manualEligibleEmployees}
           isLoadingEligibleEmployees={isLoadingManualEmployees}

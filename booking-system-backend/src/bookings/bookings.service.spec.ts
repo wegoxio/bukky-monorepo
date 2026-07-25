@@ -224,6 +224,16 @@ describe('BookingsService manual creation', () => {
 
     const bookingManagerRepo = {
       find: jest.fn().mockResolvedValue(dataSourceOverrides?.overlappingBookings ?? []),
+      createQueryBuilder: jest.fn(() => ({
+        setLock: jest.fn().mockReturnThis(),
+        leftJoinAndSelect: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getOne: jest
+          .fn()
+          .mockImplementation(async () => persistedBooking ?? createBooking(employee)),
+        getMany: jest.fn().mockResolvedValue(dataSourceOverrides?.overlappingBookings ?? []),
+      })),
       create: jest.fn((input) => ({
         id: 'booking-1',
         created_at: new Date('2026-03-18T10:00:00.000Z'),
@@ -463,6 +473,57 @@ describe('BookingsService manual creation', () => {
     expect(result.status).toBe('PENDING');
   });
 
+  it('confirms a pending group booking that requires confirmation', async () => {
+    service = buildService({
+      serviceOverrides: {
+        requires_confirmation: true,
+        min_capacity: 1,
+        max_capacity: 4,
+        capacity: 4,
+        max_party_size: 4,
+        slot_capacity: 4,
+      },
+    });
+
+    const currentUser = {
+      sub: 'user-1',
+      role: 'TENANT_ADMIN',
+      tenant_id: 'tenant-1',
+    } as const;
+
+    const created = await service.createBooking(
+      {
+        employee_id: 'employee-1',
+        service_ids: ['service-1'],
+        start_at_utc: '2026-06-19T13:35:00.000Z',
+        party_size: 3,
+        customer_name: 'Grupo',
+        customer_email: 'grupo@example.com',
+      },
+      currentUser,
+    );
+
+    const result = await service.updateStatus(
+      created.id,
+      {
+        status: 'CONFIRMED',
+      },
+      currentUser,
+    );
+
+    expect(result.status).toBe('CONFIRMED');
+    expect(result.party_size).toBe(3);
+    expect(auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'BOOKING_STATUS_UPDATED',
+        metadata: expect.objectContaining({
+          previous_status: 'PENDING',
+          status: 'CONFIRMED',
+        }),
+      }),
+    );
+  });
+
   it('allows same-service overlapping bookings until capacity is consumed', async () => {
     const serviceEntity = createService({
       min_capacity: 1,
@@ -510,6 +571,56 @@ describe('BookingsService manual creation', () => {
     expect(result.status).toBe('CONFIRMED');
   });
 
+  it('allows filling remaining group seats below the stored minimum party size', async () => {
+    const serviceEntity = createService({
+      min_capacity: 3,
+      max_capacity: 5,
+      capacity: 5,
+      min_party_size: 3,
+      max_party_size: 5,
+      slot_capacity: 5,
+    });
+    const employee = createEmployee(serviceEntity);
+    service = buildService({
+      serviceOverrides: {
+        min_capacity: 3,
+        max_capacity: 5,
+        capacity: 5,
+        min_party_size: 3,
+        max_party_size: 5,
+        slot_capacity: 5,
+      },
+      overlappingBookings: [
+        createBooking(employee, {
+          start_at_utc: new Date('2026-06-19T13:35:00.000Z'),
+          end_at_utc: new Date('2026-06-19T14:05:00.000Z'),
+          busy_start_at_utc: new Date('2026-06-19T13:30:00.000Z'),
+          busy_end_at_utc: new Date('2026-06-19T14:10:00.000Z'),
+          party_size: 3,
+          items: [createBookingItem({ service_id: 'service-1' })],
+        }),
+      ],
+    });
+
+    const result = await service.createBooking(
+      {
+        employee_id: 'employee-1',
+        service_ids: ['service-1'],
+        start_at_utc: '2026-06-19T13:35:00.000Z',
+        party_size: 2,
+        customer_name: 'Ana',
+      },
+      {
+        sub: 'user-1',
+        role: 'TENANT_ADMIN',
+        tenant_id: 'tenant-1',
+      },
+    );
+
+    expect(result.status).toBe('CONFIRMED');
+    expect(result.party_size).toBe(2);
+  });
+
   it('rejects same-service overlapping bookings when capacity is consumed', async () => {
     const serviceEntity = createService({
       min_capacity: 1,
@@ -553,6 +664,140 @@ describe('BookingsService manual creation', () => {
         },
       ),
     ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('excludes a full local-time slot using the employee schedule timezone', async () => {
+    const serviceEntity = createService({
+      duration_minutes: 60,
+      buffer_before_minutes: 0,
+      buffer_after_minutes: 0,
+      min_capacity: 1,
+      max_capacity: 5,
+      capacity: 5,
+      max_party_size: 5,
+      slot_capacity: 5,
+    });
+    const employee = createEmployee(serviceEntity, {
+      schedule_timezone: 'Europe/Paris',
+    });
+    const fullSlotBooking = createBooking(employee, {
+      start_at_utc: new Date('2026-07-28T15:00:00.000Z'),
+      end_at_utc: new Date('2026-07-28T16:00:00.000Z'),
+      busy_start_at_utc: new Date('2026-07-28T15:00:00.000Z'),
+      busy_end_at_utc: new Date('2026-07-28T16:00:00.000Z'),
+      party_size: 5,
+      items: [createBookingItem({ service_id: 'service-1' })],
+    });
+
+    service = buildService({
+      serviceOverrides: {
+        duration_minutes: 60,
+        buffer_before_minutes: 0,
+        buffer_after_minutes: 0,
+        min_capacity: 1,
+        max_capacity: 5,
+        capacity: 5,
+        max_party_size: 5,
+        slot_capacity: 5,
+      },
+    });
+    employeesRepository.findOne.mockResolvedValue(employee);
+    scheduleRulesRepository.find.mockResolvedValue([
+      {
+        day_of_week: 2,
+        start_time_local: '09:00',
+        end_time_local: '18:00',
+      },
+    ]);
+    bookingsRepository.find.mockResolvedValue([fullSlotBooking]);
+
+    const result = await service.getAvailability(
+      {
+        employee_id: 'employee-1',
+        service_ids: ['service-1'],
+        date: '2026-07-28',
+        party_size: 3,
+      },
+      {
+        sub: 'user-1',
+        role: 'TENANT_ADMIN',
+        tenant_id: 'tenant-1',
+      },
+    );
+
+    expect(result.timezone).toBe('Europe/Paris');
+    expect(result.slots.map((slot) => slot.start_at_utc)).not.toContain('2026-07-28T15:00:00.000Z');
+  });
+
+  it('keeps partially occupied group slots visible for remaining seats below the stored minimum', async () => {
+    const serviceEntity = createService({
+      duration_minutes: 60,
+      buffer_before_minutes: 0,
+      buffer_after_minutes: 0,
+      min_capacity: 3,
+      max_capacity: 5,
+      capacity: 5,
+      min_party_size: 3,
+      max_party_size: 5,
+      slot_capacity: 5,
+    });
+    const employee = createEmployee(serviceEntity, {
+      schedule_timezone: 'Europe/Paris',
+    });
+    const partialSlotBooking = createBooking(employee, {
+      start_at_utc: new Date('2026-07-28T15:00:00.000Z'),
+      end_at_utc: new Date('2026-07-28T16:00:00.000Z'),
+      busy_start_at_utc: new Date('2026-07-28T15:00:00.000Z'),
+      busy_end_at_utc: new Date('2026-07-28T16:00:00.000Z'),
+      party_size: 3,
+      items: [createBookingItem({ service_id: 'service-1' })],
+    });
+
+    service = buildService({
+      serviceOverrides: {
+        duration_minutes: 60,
+        buffer_before_minutes: 0,
+        buffer_after_minutes: 0,
+        min_capacity: 3,
+        max_capacity: 5,
+        capacity: 5,
+        min_party_size: 3,
+        max_party_size: 5,
+        slot_capacity: 5,
+      },
+    });
+    employeesRepository.findOne.mockResolvedValue(employee);
+    scheduleRulesRepository.find.mockResolvedValue([
+      {
+        day_of_week: 2,
+        start_time_local: '09:00',
+        end_time_local: '18:00',
+      },
+    ]);
+    bookingsRepository.find.mockResolvedValue([partialSlotBooking]);
+
+    const result = await service.getAvailability(
+      {
+        employee_id: 'employee-1',
+        service_ids: ['service-1'],
+        date: '2026-07-28',
+        party_size: 2,
+      },
+      {
+        sub: 'user-1',
+        role: 'TENANT_ADMIN',
+        tenant_id: 'tenant-1',
+      },
+    );
+
+    expect(result.slots).toContainEqual(
+      expect.objectContaining({
+        start_at_utc: '2026-07-28T15:00:00.000Z',
+        occupied_capacity: 3,
+        available_capacity: 2,
+        requested_party_size: 2,
+      }),
+    );
   });
 
   it('filters booking list by local date range for calendar views', async () => {

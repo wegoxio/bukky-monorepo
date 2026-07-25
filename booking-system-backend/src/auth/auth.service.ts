@@ -723,7 +723,7 @@ export class AuthService {
     user.mfa_enabled_at = new Date();
     user.mfa_totp_secret_encrypted = user.mfa_pending_secret_encrypted;
     user.mfa_recovery_code_hashes = await Promise.all(
-      recoveryCodes.map((recoveryCode) => argon2.hash(recoveryCode)),
+      recoveryCodes.map((recoveryCode) => argon2.hash(this.normalizeRecoveryCode(recoveryCode))),
     );
     user.mfa_pending_secret_encrypted = null;
     user.mfa_pending_expires_at = null;
@@ -826,7 +826,7 @@ export class AuthService {
 
     const recoveryCodes = this.generateRecoveryCodes();
     user.mfa_recovery_code_hashes = await Promise.all(
-      recoveryCodes.map((nextCode) => argon2.hash(nextCode)),
+      recoveryCodes.map((nextCode) => argon2.hash(this.normalizeRecoveryCode(nextCode))),
     );
     await this.usersRepo.save(user);
 
@@ -1142,11 +1142,12 @@ export class AuthService {
 
     const normalizedRecoveryCode = recoveryCode ? this.normalizeRecoveryCode(recoveryCode) : null;
     if (normalizedRecoveryCode && user.mfa_recovery_code_hashes?.length) {
+      const recoveryCodeHashInputs = this.getRecoveryCodeHashInputs(normalizedRecoveryCode);
       const remainingHashes: string[] = [];
       let matched = false;
 
       for (const hash of user.mfa_recovery_code_hashes) {
-        if (!matched && (await argon2.verify(hash, normalizedRecoveryCode))) {
+        if (!matched && (await this.verifyRecoveryCodeHash(hash, recoveryCodeHashInputs))) {
           matched = true;
           if (!options.consumeRecoveryCode) {
             remainingHashes.push(hash);
@@ -1194,15 +1195,35 @@ export class AuthService {
     return code.toUpperCase().replace(/[^A-Z0-9]/g, '');
   }
 
+  private formatRecoveryCode(normalizedCode: string): string {
+    return normalizedCode.replace(/(.{4})(?=.)/g, '$1-');
+  }
+
+  private getRecoveryCodeHashInputs(normalizedCode: string): string[] {
+    return Array.from(new Set([normalizedCode, this.formatRecoveryCode(normalizedCode)]));
+  }
+
+  private async verifyRecoveryCodeHash(hash: string, candidates: string[]): Promise<boolean> {
+    for (const candidate of candidates) {
+      if (await argon2.verify(hash, candidate)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   private generateRecoveryCodes(): string[] {
     return Array.from({ length: 10 }, () => {
-      const raw = randomBytes(9)
-        .toString('base64url')
-        .replace(/[^A-Z0-9]/gi, '');
-      return raw
-        .toUpperCase()
-        .slice(0, 12)
-        .replace(/(.{4})(?=.)/g, '$1-');
+      let normalizedCode = '';
+      while (normalizedCode.length < 12) {
+        normalizedCode += randomBytes(12)
+          .toString('base64url')
+          .replace(/[^A-Z0-9]/gi, '')
+          .toUpperCase();
+      }
+
+      return this.formatRecoveryCode(normalizedCode.slice(0, 12));
     });
   }
 

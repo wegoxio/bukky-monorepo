@@ -48,12 +48,8 @@ function toPositiveInteger(value: string, fallback: number): number {
   return Number.isInteger(parsedValue) && parsedValue > 0 ? parsedValue : normalizedFallback;
 }
 
-function buildCapacityPatch(
-  minPartySize: number,
-  maxPartySize: number,
-  slotCapacity: number,
-): CapacityPatch {
-  const normalizedMinPartySize = Math.max(1, minPartySize);
+function buildCapacityPatch(maxPartySize: number, slotCapacity: number): CapacityPatch {
+  const normalizedMinPartySize = 1;
   const normalizedMaxPartySize = Math.max(normalizedMinPartySize, maxPartySize);
   const normalizedSlotCapacity = Math.max(normalizedMaxPartySize, slotCapacity);
 
@@ -67,31 +63,15 @@ function buildCapacityPatch(
   };
 }
 
-function buildMinPartySizePatch(value: string, previous: ServiceFormState): CapacityPatch {
-  const nextMinPartySize = toPositiveInteger(value, previous.min_party_size);
-  const nextMaxPartySize = Math.max(previous.max_party_size, nextMinPartySize);
-  return buildCapacityPatch(
-    nextMinPartySize,
-    nextMaxPartySize,
-    Math.max(previous.slot_capacity, nextMaxPartySize),
-  );
-}
-
 function buildMaxPartySizePatch(value: string, previous: ServiceFormState): CapacityPatch {
   const nextMaxPartySize = toPositiveInteger(value, previous.max_party_size);
-  const nextMinPartySize = Math.min(Math.max(1, previous.min_party_size), nextMaxPartySize);
-  return buildCapacityPatch(
-    nextMinPartySize,
-    nextMaxPartySize,
-    Math.max(previous.slot_capacity, nextMaxPartySize),
-  );
+  return buildCapacityPatch(nextMaxPartySize, Math.max(previous.slot_capacity, nextMaxPartySize));
 }
 
 function buildSlotCapacityPatch(value: string, previous: ServiceFormState): CapacityPatch {
   const nextSlotCapacity = toPositiveInteger(value, previous.slot_capacity);
   const nextMaxPartySize = Math.min(Math.max(1, previous.max_party_size), nextSlotCapacity);
-  const nextMinPartySize = Math.min(Math.max(1, previous.min_party_size), nextMaxPartySize);
-  return buildCapacityPatch(nextMinPartySize, nextMaxPartySize, nextSlotCapacity);
+  return buildCapacityPatch(nextMaxPartySize, nextSlotCapacity);
 }
 
 function buildCurrencyOptions(currentValue: string): SelectOption[] {
@@ -120,12 +100,8 @@ export default function ServiceEditModalContent({
   onEmployeeSearchChange,
   onEmployeeToggle,
 }: ServiceEditModalContentProps): React.ReactNode {
-  const capacityState = buildCapacityPatch(
-    form.min_party_size,
-    form.max_party_size,
-    form.slot_capacity,
-  );
-  const { min_party_size: minPartySize, max_party_size: maxPartySize } = capacityState;
+  const capacityState = buildCapacityPatch(form.max_party_size, form.slot_capacity);
+  const { max_party_size: maxPartySize } = capacityState;
   const slotCapacity = capacityState.slot_capacity;
   const durationOptions = buildNumberOptions(
     BASE_DURATION_OPTIONS,
@@ -134,7 +110,7 @@ export default function ServiceEditModalContent({
   );
   const capacityOptions = buildNumberOptions(
     BASE_CAPACITY_OPTIONS,
-    Math.max(minPartySize, maxPartySize, slotCapacity),
+    Math.max(maxPartySize, slotCapacity),
     (value) => `${value} persona${value === 1 ? '' : 's'}`,
   );
   const currencyOptions = buildCurrencyOptions(form.currency);
@@ -169,7 +145,7 @@ export default function ServiceEditModalContent({
         />
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         <div className="space-y-1.5">
           <label htmlFor="service-duration" className="text-sm font-medium text-fg-label">
             Duración (min)
@@ -187,24 +163,8 @@ export default function ServiceEditModalContent({
         </div>
 
         <div className="space-y-1.5">
-          <label htmlFor="service-min-capacity" className="text-sm font-medium text-fg-label">
-            Mín. personas
-          </label>
-          <SelectField
-            value={String(minPartySize)}
-            onValueChange={(value) => {
-              onFormChange((prev) => ({
-                ...prev,
-                ...buildMinPartySizePatch(value, prev),
-              }));
-            }}
-            options={capacityOptions}
-          />
-        </div>
-
-        <div className="space-y-1.5">
           <label htmlFor="service-max-capacity" className="text-sm font-medium text-fg-label">
-            Máx. personas
+            Max. por reserva
           </label>
           <SelectField
             value={String(maxPartySize)}
@@ -219,7 +179,7 @@ export default function ServiceEditModalContent({
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-fg-label">Capacidad total del horario</label>
+          <label className="text-sm font-medium text-fg-label">Plazas por horario</label>
           <SelectField
             value={String(slotCapacity)}
             onValueChange={(value) => {

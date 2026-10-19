@@ -201,7 +201,7 @@ function pickSource(): BookingSource {
   ]);
 }
 
-function pickStatus(startAtUtc: Date): BookingStatus {
+function pickStatus(startAtUtc: Date, trend: 'previous' | 'current' | 'future'): BookingStatus {
   const now = Date.now();
   const startsInFuture = startAtUtc.getTime() > now;
 
@@ -211,6 +211,26 @@ function pickStatus(startAtUtc: Date): BookingStatus {
       { value: 'CONFIRMED', weight: 45 },
       { value: 'IN_PROGRESS', weight: 5 },
       { value: 'CANCELLED', weight: 18 },
+    ]);
+  }
+
+  // Keep the demo dashboard intentionally positive: the current period has
+  // more completed bookings and fewer losses than the previous period.
+  if (trend === 'previous') {
+    return randomWeightedValue<BookingStatus>([
+      { value: 'COMPLETED', weight: 45 },
+      { value: 'CANCELLED', weight: 25 },
+      { value: 'NO_SHOW', weight: 20 },
+      { value: 'CONFIRMED', weight: 10 },
+    ]);
+  }
+
+  if (trend === 'current') {
+    return randomWeightedValue<BookingStatus>([
+      { value: 'COMPLETED', weight: 78 },
+      { value: 'CONFIRMED', weight: 14 },
+      { value: 'CANCELLED', weight: 5 },
+      { value: 'NO_SHOW', weight: 3 },
     ]);
   }
 
@@ -468,10 +488,31 @@ async function main() {
       .sort(() => Math.random() - 0.5)
       .slice(0, desiredServiceCount);
 
-    const dayOffset = randomInt(-120, 14);
-    const startBase = new Date();
-    startBase.setUTCHours(0, 0, 0, 0);
-    startBase.setUTCDate(startBase.getUTCDate() + dayOffset);
+    const nowForTrend = new Date();
+    nowForTrend.setUTCHours(0, 0, 0, 0);
+    const monthStart = new Date(nowForTrend.getUTCFullYear(), nowForTrend.getUTCMonth(), 1);
+    const daysElapsedThisMonth = Math.max(1, nowForTrend.getUTCDate() - 1);
+    const previousMonthStart = new Date(monthStart);
+    previousMonthStart.setUTCMonth(previousMonthStart.getUTCMonth() - 1);
+
+    // 180 bookings in the previous period, 240 completed/current bookings,
+    // and a smaller future pipeline. This guarantees positive demo KPIs.
+    let trend: 'previous' | 'current' | 'future';
+    let startBase: Date;
+    if (index < Math.min(180, bookingCount)) {
+      trend = 'previous';
+      startBase = new Date(previousMonthStart);
+      startBase.setUTCDate(randomInt(1, 28));
+    } else if (index < Math.min(420, bookingCount)) {
+      trend = 'current';
+      startBase = new Date(monthStart);
+      startBase.setUTCDate(randomInt(1, daysElapsedThisMonth));
+    } else {
+      trend = 'future';
+      startBase = new Date(monthStart);
+      startBase.setUTCDate(nowForTrend.getUTCDate() + randomInt(1, 14));
+    }
+
     const hour = randomInt(8, 19);
     const minute = randomItem([0, 15, 30, 45]);
     const startAtUtc = new Date(startBase.getTime() + hour * 60 * 60 * 1000 + minute * 60 * 1000);
@@ -504,7 +545,7 @@ async function main() {
 
     const totalPrice = selectedServices.reduce((sum, service) => sum + Number(service.price), 0);
 
-    const status = pickStatus(startAtUtc);
+    const status = pickStatus(startAtUtc, trend);
     const source = pickSource();
     const customer = randomItem(customerProfiles);
 

@@ -484,7 +484,23 @@ async function main() {
         service.buffer_after_minutes,
       0,
     );
-    const endAtUtc = new Date(startAtUtc.getTime() + totalDurationMinutes * 60 * 1000);
+    const totalServiceMinutes = selectedServices.reduce(
+      (sum, service) => sum + service.duration_minutes,
+      0,
+    );
+    const totalBufferBeforeMinutes = selectedServices.reduce(
+      (sum, service) => sum + service.buffer_before_minutes,
+      0,
+    );
+    const totalBufferAfterMinutes = selectedServices.reduce(
+      (sum, service) => sum + service.buffer_after_minutes,
+      0,
+    );
+    const busyStartAtUtc = new Date(
+      startAtUtc.getTime() - totalBufferBeforeMinutes * 60 * 1000,
+    );
+    const endAtUtc = new Date(startAtUtc.getTime() + totalServiceMinutes * 60 * 1000);
+    const busyEndAtUtc = new Date(endAtUtc.getTime() + totalBufferAfterMinutes * 60 * 1000);
 
     const totalPrice = selectedServices.reduce((sum, service) => sum + Number(service.price), 0);
 
@@ -508,6 +524,8 @@ async function main() {
       employee_id: employee.id,
       start_at_utc: startAtUtc,
       end_at_utc: endAtUtc,
+      busy_start_at_utc: busyStartAtUtc,
+      busy_end_at_utc: busyEndAtUtc,
       status,
       completed_at_utc: lifecycle.completed_at_utc,
       completed_by_user_id: lifecycle.completed_by_user_id,

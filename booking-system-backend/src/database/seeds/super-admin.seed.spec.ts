@@ -86,7 +86,7 @@ describe('seedSuperAdmin', () => {
     expect(existingUser.role).toBe('SUPER_ADMIN');
   });
 
-  it('no reemplaza la contrasena de un usuario existente', async () => {
+  it('no reemplaza la contraseña de un usuario existente', async () => {
     const existingUser = {
       id: 'existing-user-id',
       email: 'admin@bukky.test',

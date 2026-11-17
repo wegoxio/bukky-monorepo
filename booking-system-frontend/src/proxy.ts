@@ -13,7 +13,7 @@ export function proxy(request: NextRequest) {
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data:",
-    `connect-src 'self'${apiOrigin ? ` ${apiOrigin}` : ''} ${turnstileOrigin}`,
+    `connect-src 'self'${apiOrigin ? ` ${apiOrigin}` : ''} ${turnstileOrigin} https://*.challenges.cloudflare.com`,
     `frame-src ${turnstileOrigin}`,
     "object-src 'none'",
     "base-uri 'self'",

@@ -561,7 +561,7 @@ export default function TenantSettingsPanel() {
             </SectionCard>
           </div>
 
-          <div data-tour="theme-builder-branding" className="order-3">
+          <div data-tour="theme-builder-branding">
             <SectionCard
               title="Marca"
               description="Nombre del negocio y título de la ventana."
@@ -600,7 +600,7 @@ export default function TenantSettingsPanel() {
             </SectionCard>
           </div>
 
-          <div data-tour="theme-builder-assets" className="order-4">
+          <div data-tour="theme-builder-assets">
             <SectionCard
               title="Recursos"
               description="Logo y favicon con previsualización antes de guardar."

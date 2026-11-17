@@ -66,11 +66,10 @@ El bucket de assets permite `GetObject` público porque la aplicación genera UR
   -Region us-east-1 `
   -AvailabilityZone us-east-1a `
   -InstanceName bukky-production-app `
-  -KeyPairName bukky-production `
-  -AdminCidr 203.0.113.10/32
+  -KeyPairName bukky-production
 ```
 
-El script descubre el bundle Linux activo de 4 GB/USD 24, habilita snapshots diarios, asigna una IP estática y limita SSH al CIDR indicado. Nunca exponer `5432`.
+El script descubre el bundle Linux activo de 4 GB/USD 24, habilita snapshots diarios y asigna una IP estática. SSH queda abierto para los runners dinámicos de GitHub Actions, pero Ubuntu sólo admite autenticación mediante clave. Si se cambia a un runner con IP fija, usar `-SshCidr IP/32`. Nunca exponer `5432`.
 
 Crear registros DNS `A`:
 

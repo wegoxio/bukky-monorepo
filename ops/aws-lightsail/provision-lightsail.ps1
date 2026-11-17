@@ -4,7 +4,7 @@ param(
   [string]$InstanceName = 'bukky-production-app',
   [string]$BlueprintId = 'ubuntu_24_04',
   [string]$KeyPairName = 'bukky-production',
-  [Parameter(Mandatory)] [string]$AdminCidr
+  [string]$SshCidr = '0.0.0.0/0'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,7 +48,7 @@ aws lightsail allocate-static-ip --region $Region --static-ip-name $staticIpName
 aws lightsail attach-static-ip --region $Region --static-ip-name $staticIpName --instance-name $InstanceName | Out-Null
 
 $ports = @(
-  @{ fromPort = 22; toPort = 22; protocol = 'tcp'; cidrs = @($AdminCidr) },
+  @{ fromPort = 22; toPort = 22; protocol = 'tcp'; cidrs = @($SshCidr) },
   @{ fromPort = 80; toPort = 80; protocol = 'tcp'; cidrs = @('0.0.0.0/0') },
   @{ fromPort = 443; toPort = 443; protocol = 'tcp'; cidrs = @('0.0.0.0/0'); cidrListAliases = @() },
   @{ fromPort = 443; toPort = 443; protocol = 'udp'; cidrs = @('0.0.0.0/0'); cidrListAliases = @() }

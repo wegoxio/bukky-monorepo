@@ -1,17 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
-import { isSentryEnabled } from '@/sentry.shared';
-
-export default function GlobalError({ error }: { error: Error & { digest?: string } }) {
-  useEffect(() => {
-    if (!isSentryEnabled()) return;
-
-    void import('@sentry/nextjs').then((Sentry) => {
-      Sentry.captureException(error);
-    });
-  }, [error]);
-
+export default function GlobalError() {
   return (
     <html lang="es">
       <body>
@@ -51,8 +40,7 @@ export default function GlobalError({ error }: { error: Error & { digest?: strin
             </p>
             <h1 style={{ margin: '0 0 12px', fontSize: '28px' }}>No pudimos cargar esta vista</h1>
             <p style={{ margin: 0, lineHeight: 1.6, color: '#4b5563' }}>
-              Ya registramos el problema para revisarlo. Puedes recargar la página o volver a
-              intentarlo en unos minutos.
+              Puedes recargar la página o volver a intentarlo en unos minutos.
             </p>
           </section>
         </main>

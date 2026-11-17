@@ -16,6 +16,7 @@ describe('RemindersScheduler', () => {
     getCronJob: jest.Mock;
     doesExist: jest.Mock;
   };
+  let advisoryLock: { runWithLock: jest.Mock };
 
   beforeEach(() => {
     remindersService = {
@@ -29,6 +30,8 @@ describe('RemindersScheduler', () => {
       get: jest.fn((key: string, defaultValue?: unknown) => {
         const values: Record<string, unknown> = {
           REMINDERS_TIMEZONE: 'America/Caracas',
+          APP_ROLE: 'all',
+          REMINDERS_SCHEDULER_ENABLED: true,
           REMINDERS_DISPATCH_HOUR: 17,
           REMINDERS_DISPATCH_MINUTE: 0,
           REMINDERS_BACKFILL_CRON: '0 0,30 * * * *',
@@ -48,11 +51,18 @@ describe('RemindersScheduler', () => {
       })),
       doesExist: jest.fn(() => false),
     };
+    advisoryLock = {
+      runWithLock: jest.fn(async (_name: string, work: () => Promise<void>) => {
+        await work();
+        return true;
+      }),
+    };
 
     scheduler = new RemindersScheduler(
       remindersService as never,
       configService as never,
       schedulerRegistry as unknown as SchedulerRegistry,
+      advisoryLock as never,
     );
   });
 
@@ -101,8 +111,23 @@ describe('RemindersScheduler', () => {
     expect(schedulerRegistry.deleteCronJob).toHaveBeenCalledTimes(4);
   });
 
+  it('does not register cron jobs in an api-only process', () => {
+    configService.get.mockImplementation((key: string, defaultValue?: unknown) =>
+      key === 'APP_ROLE' ? 'api' : defaultValue,
+    );
+    const registerSpy = jest.spyOn(scheduler as any, 'registerCronJob');
+
+    scheduler.onModuleInit();
+
+    expect(registerSpy).not.toHaveBeenCalled();
+  });
+
   it('delegates the daily dispatch tick to the reminders service', async () => {
     await scheduler.handleDispatchTick();
+    expect(advisoryLock.runWithLock).toHaveBeenCalledWith(
+      'bukky:reminders:dispatch',
+      expect.any(Function),
+    );
     expect(remindersService.dispatchTomorrowRemindersIfDue).toHaveBeenCalledTimes(1);
   });
 

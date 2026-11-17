@@ -15,9 +15,8 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { RemindersModule } from './reminders/reminders.module';
 import { ReportsModule } from './reports/reports.module';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
-import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
-import { SentryGlobalFilter, SentryModule } from '@sentry/nestjs/setup';
 import { HttpPerformanceInterceptor } from './common/performance/http-performance.interceptor';
 import { HealthModule } from './health/health.module';
 
@@ -35,7 +34,6 @@ import { HealthModule } from './health/health.module';
     ReportsModule,
     TenantSettingsModule,
     HealthModule,
-    SentryModule.forRoot(),
     ScheduleModule.forRoot(),
     ConfigModule.forRoot({
       isGlobal: true,
@@ -64,10 +62,6 @@ import { HealthModule } from './health/health.module';
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
-    },
-    {
-      provide: APP_FILTER,
-      useClass: SentryGlobalFilter,
     },
     {
       provide: APP_INTERCEPTOR,

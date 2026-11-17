@@ -257,9 +257,6 @@ jobs:
       NEXT_PUBLIC_TURNSTILE_LOGIN_ACTION: login
       NEXT_PUBLIC_TURNSTILE_BOOKING_ACTION: booking_create
       NEXT_PUBLIC_TURNSTILE_RESCHEDULE_ACTION: booking_reschedule
-      NEXT_PUBLIC_SENTRY_ENABLED: false
-      NEXT_PUBLIC_SENTRY_ENVIRONMENT: ci
-      NEXT_PUBLIC_SENTRY_RELEASE: ci
 
     steps:
       - name: Checkout

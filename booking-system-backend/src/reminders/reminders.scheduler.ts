@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
 import { RemindersService } from './reminders.service';
-import * as Sentry from '@sentry/nestjs';
+import { PostgresAdvisoryLockService } from './postgres-advisory-lock.service';
 
 const REMINDER_CRON_JOB_NAMES = [
   'booking-reminders-dispatch',
@@ -20,9 +20,17 @@ export class RemindersScheduler implements OnModuleInit, OnModuleDestroy {
     private readonly remindersService: RemindersService,
     private readonly configService: ConfigService,
     private readonly schedulerRegistry: SchedulerRegistry,
+    private readonly advisoryLock: PostgresAdvisoryLockService,
   ) {}
 
   onModuleInit(): void {
+    const appRole = this.configService.get<string>('APP_ROLE', 'all');
+    const schedulerEnabled = this.configService.get<boolean>('REMINDERS_SCHEDULER_ENABLED', true);
+    if (appRole === 'api' || !schedulerEnabled) {
+      this.logger.log('Reminder scheduler disabled for this process.');
+      return;
+    }
+
     this.registerCronJob('booking-reminders-dispatch', this.buildDispatchCronExpression(), () =>
       this.handleDispatchTick(),
     );
@@ -56,19 +64,31 @@ export class RemindersScheduler implements OnModuleInit, OnModuleDestroy {
   }
 
   async handleDispatchTick(): Promise<void> {
-    await this.remindersService.dispatchTomorrowRemindersIfDue();
+    await this.runExclusive('dispatch', async () => {
+      await this.remindersService.dispatchTomorrowRemindersIfDue();
+    });
   }
 
   async handleBackfillTick(): Promise<void> {
-    await this.remindersService.backfillMissedTomorrowReminders();
+    await this.runExclusive('backfill', async () => {
+      await this.remindersService.backfillMissedTomorrowReminders();
+    });
   }
 
   async handleProcessingTick(): Promise<void> {
-    await this.remindersService.processDueReminders();
+    await this.runExclusive('processor', async () => {
+      await this.remindersService.processDueReminders();
+    });
   }
 
   async handleRecoveryTick(): Promise<void> {
-    await this.remindersService.recoverStuckProcessingReminders();
+    await this.runExclusive('recovery', async () => {
+      await this.remindersService.recoverStuckProcessingReminders();
+    });
+  }
+
+  private async runExclusive(job: string, handler: () => Promise<void>): Promise<void> {
+    await this.advisoryLock.runWithLock(`bukky:reminders:${job}`, handler);
   }
 
   private buildDispatchCronExpression(): string {
@@ -116,12 +136,6 @@ export class RemindersScheduler implements OnModuleInit, OnModuleDestroy {
     try {
       await handler();
     } catch (error) {
-      Sentry.captureException(error, {
-        tags: {
-          component: 'reminders-scheduler',
-          cron_job: name,
-        },
-      });
       this.logger.error(`Cron job "${name}" failed: ${String(error)}`);
     }
   }

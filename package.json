@@ -35,7 +35,6 @@
     ],
     "ignoredBuiltDependencies": [
       "@scarf/scarf",
-      "@sentry/cli",
       "sharp",
       "unrs-resolver"
     ],

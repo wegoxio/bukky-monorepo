@@ -44,25 +44,4 @@ const nextConfig: NextConfig = {
   },
 };
 
-const isSentryConfigEnabled =
-  process.env.NEXT_PUBLIC_SENTRY_ENABLED === 'true' || Boolean(process.env.SENTRY_AUTH_TOKEN);
-
-export default async function getNextConfig() {
-  if (!isSentryConfigEnabled) {
-    return nextConfig;
-  }
-
-  const { withSentryConfig } = await import('@sentry/nextjs');
-
-  return withSentryConfig(nextConfig, {
-    org: process.env.SENTRY_ORG,
-    project: process.env.SENTRY_FRONTEND_PROJECT,
-    authToken: process.env.SENTRY_AUTH_TOKEN,
-    silent: !process.env.CI,
-    tunnelRoute: '/monitoring',
-    widenClientFileUpload: true,
-    sourcemaps: {
-      deleteSourcemapsAfterUpload: true,
-    },
-  });
-}
+export default nextConfig;

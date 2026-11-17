@@ -537,9 +537,7 @@ async function main() {
       (sum, service) => sum + service.buffer_after_minutes,
       0,
     );
-    const busyStartAtUtc = new Date(
-      startAtUtc.getTime() - totalBufferBeforeMinutes * 60 * 1000,
-    );
+    const busyStartAtUtc = new Date(startAtUtc.getTime() - totalBufferBeforeMinutes * 60 * 1000);
     const endAtUtc = new Date(startAtUtc.getTime() + totalServiceMinutes * 60 * 1000);
     const busyEndAtUtc = new Date(endAtUtc.getTime() + totalBufferAfterMinutes * 60 * 1000);
 

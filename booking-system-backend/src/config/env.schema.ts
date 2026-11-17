@@ -59,6 +59,7 @@ export const envSchema = z
   .object({
     // App
     NODE_ENV: z.string().default('development'),
+    APP_ROLE: z.enum(['all', 'api', 'worker']).default('all'),
     PORT: z.coerce.number().default(3000),
     TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(1),
     CORS_ORIGINS: z
@@ -144,13 +145,6 @@ export const envSchema = z
     PERFORMANCE_LOG_ALL_REQUESTS: envBoolean(false),
     PERFORMANCE_SLOW_REQUEST_MS: z.coerce.number().int().positive().default(750),
 
-    // Sentry
-    SENTRY_ENABLED: envBoolean(false),
-    SENTRY_DSN: z.string().url().optional(),
-    SENTRY_ENVIRONMENT: z.string().min(1).optional(),
-    SENTRY_RELEASE: z.string().min(1).optional(),
-    SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0.02),
-
     // Argon2
     ARGON2_MEMORY_COST: z.coerce.number().default(65536),
     ARGON2_TIME_COST: z.coerce.number().default(3),
@@ -186,6 +180,7 @@ export const envSchema = z
 
     // Booking reminders
     REMINDERS_ENABLED: envBoolean(false),
+    REMINDERS_SCHEDULER_ENABLED: envBoolean(true),
     REMINDERS_TIMEZONE: z.string().min(1).default('America/Caracas'),
     REMINDERS_DISPATCH_HOUR: z.coerce.number().min(0).max(23).default(17),
     REMINDERS_DISPATCH_MINUTE: z.coerce.number().min(0).max(59).default(0),

@@ -1,4 +1,3 @@
-import './instrument';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
@@ -16,6 +15,12 @@ function normalizeOrigin(origin: string): string {
 const PORT = Number(process.env.PORT ?? 8080);
 
 async function bootstrap() {
+  if (process.env.APP_ROLE === 'worker') {
+    const worker = await NestFactory.createApplicationContext(AppModule);
+    worker.enableShutdownHooks();
+    return;
+  }
+
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
   const isProduction = configService.get<string>('NODE_ENV', 'development') === 'production';

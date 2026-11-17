@@ -1,24 +1,112 @@
 # Bukky Booking
 
-Monorepo de Bukky Booking:
+Monorepo de la plataforma SaaS multiempresa de reservas Bukky.
 
-- `booking-system-backend`: API NestJS.
-- `booking-system-frontend`: aplicación Next.js.
-- `docs`: documentación técnica viva.
-- `performance`: pruebas y notas de rendimiento.
-- `.github/workflows`: CI/CD.
+- `booking-system-backend`: NestJS, TypeORM y PostgreSQL.
+- `booking-system-frontend`: Next.js y React.
+- `ops/aws-lightsail`: despliegue productivo económico en AWS.
+- `performance`: carga y flujos críticos.
+- `docs`: documentación técnica consolidada.
+
+## Requisitos
+
+- Node.js 22.
+- pnpm 10.17.1 mediante Corepack.
+- Docker con Compose para PostgreSQL local.
+
+```bash
+corepack enable
+corepack prepare pnpm@10.17.1 --activate
+pnpm install --frozen-lockfile
+```
 
 ## Desarrollo local
 
-```powershell
-pnpm install
+### 1. Base de datos
+
+```bash
+docker compose -f compose.local.yaml up -d
+```
+
+La configuración local predeterminada es:
+
+```text
+host: localhost
+port: 5432
+database: bukky
+user: bukky
+password: bukky_local
+```
+
+### 2. Variables del backend
+
+Copiar `booking-system-backend/.env.example` a `booking-system-backend/.env` y configurar como mínimo:
+
+```env
+NODE_ENV=development
+APP_ROLE=all
+APP_PUBLIC_URL=http://localhost:3000
+PORT=3001
+CORS_ORIGINS=http://localhost:3000
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=bukky
+DB_PASSWORD=bukky_local
+DB_NAME=bukky
+DB_SSL=false
+JWT_SECRET=local-jwt-secret-change-before-production
+JWT_REFRESH_SECRET=local-refresh-secret-change-before-production
+MFA_CHALLENGE_SECRET=local-mfa-secret-change-before-production
+TURNSTILE_ENABLED=false
+MAIL_ENABLED=false
+REMINDERS_ENABLED=false
+```
+
+S3, Resend, Turnstile y recordatorios pueden permanecer desactivados para desarrollo básico.
+
+### 3. Variables del frontend
+
+Copiar `booking-system-frontend/.env.example` a `booking-system-frontend/.env.local`:
+
+```env
+NEXT_PUBLIC_API_URL=http://localhost:3001/api
+NEXT_PUBLIC_APP_DOMAIN=http://localhost:3000
+```
+
+### 4. Migraciones y datos iniciales
+
+```bash
+pnpm --filter booking-system migration:run
+pnpm --filter booking-system seed:superadmin
+```
+
+Las credenciales del superadministrador se toman de `SUPERADMIN_NAME`, `SUPERADMIN_EMAIL` y `SUPERADMIN_PASSWORD`.
+
+### 5. Ejecutar
+
+En dos terminales:
+
+```bash
 pnpm --filter booking-system start:dev
 pnpm --filter booking-system-frontend dev
 ```
 
-## Quality gates locales
+- Frontend: `http://localhost:3000`.
+- API: `http://localhost:3001/api`.
+- Health: `http://localhost:3001/api/health`.
+- Swagger de desarrollo: `http://localhost:3001/api/docs`.
 
-```powershell
+## Validación
+
+El quality gate completo es:
+
+```bash
+pnpm run ci
+```
+
+Comandos separados:
+
+```bash
 pnpm ci:format
 pnpm ci:lint
 pnpm ci:typecheck
@@ -26,36 +114,67 @@ pnpm ci:test:unit
 pnpm ci:build
 ```
 
-Pruebas backend con PostgreSQL:
+Pruebas con PostgreSQL:
 
-```powershell
+```bash
 pnpm --filter booking-system migration:run
 pnpm ci:test:e2e:backend
-$env:RUN_DB_INTEGRATION='true'; pnpm ci:test:integration:backend
 ```
 
-## Flujo de ramas
+PowerShell:
 
-- `feature-*` -> PR hacia `develop`.
-- `develop` -> PR hacia `main`.
-- `develop` no despliega.
-- `main` despliega a producción mediante GitHub Actions + Cloud Build.
+```powershell
+$env:RUN_DB_INTEGRATION='true'
+pnpm ci:test:integration:backend
+```
 
-El único check que debe marcarse como obligatorio en GitHub es `CI Required`.
+Bash:
 
-## CI/CD
+```bash
+RUN_DB_INTEGRATION=true pnpm ci:test:integration:backend
+```
 
-Documentación completa:
+## Migraciones
 
-- [CI/CD con GitHub Actions, Cloud Build y Cloud Run](docs/ci-cd-github-google-cloud.md)
+```bash
+pnpm --filter booking-system migration:status
+pnpm --filter booking-system migration:run
+pnpm --filter booking-system migration:revert
+```
 
-Producción usa:
+No usar `synchronize` ni modificar producción manualmente. Todo cambio de esquema debe entrar como migración y probarse contra PostgreSQL 16.
 
-- GitHub Actions sin secrets en PR.
-- Workload Identity Federation hacia Google Cloud.
-- Cloud Build con imágenes etiquetadas por SHA.
-- Cloud Run Job para migraciones.
-- Cloud Run para backend y frontend.
-- Smoke tests después de desplegar.
+## Roles de ejecución del backend
 
-No se usan claves JSON de Google Cloud.
+```env
+APP_ROLE=all      # API + scheduler, desarrollo y producción económica
+APP_ROLE=api      # solo HTTP, para réplicas escalables
+APP_ROLE=worker   # solo jobs, sin puerto HTTP
+```
+
+Los recordatorios tienen advisory locks PostgreSQL, reclamo atómico e idempotencia de email.
+
+## Producción
+
+El push a `main` valida, publica imágenes en GHCR y despliega a Lightsail. Antes del primer release deben configurarse AWS, DNS, host y el environment `production` de GitHub.
+
+Consultar:
+
+- [Estructura técnica](docs/TECHNICAL.md).
+- [Arquitectura y despliegue AWS](docs/DEPLOYMENT.md).
+- [Modelo de negocio y pricing](docs/business-model-and-pricing.es.md).
+
+## Detener o reiniciar el entorno local
+
+```bash
+docker compose -f compose.local.yaml stop
+docker compose -f compose.local.yaml start
+```
+
+Para borrar la base local deliberadamente:
+
+```bash
+docker compose -f compose.local.yaml down -v
+```
+
+Ese último comando elimina todos los datos locales del volumen PostgreSQL.

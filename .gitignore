@@ -6,6 +6,7 @@ node_modules/
 .env
 .env.*
 !.env.example
+!.env.production.example
 
 # Build outputs
 dist/
@@ -36,3 +37,9 @@ Thumbs.db
 .codex/
 
 BRIEF_TECNICO_WEEGOX_BOOKING.md
+# Local AWS Organizations policy backups
+.local/aws-policy-backups/
+.local/aws/
+
+# Business pricing draft intentionally kept local
+docs/business-model-and-pricing.es.md

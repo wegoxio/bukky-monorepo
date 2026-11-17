@@ -192,8 +192,7 @@ export default function TenantAdminsManagement() {
       toast.success('Invitación reenviada correctamente.');
       setTenantAdminToResendInvitation(null);
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'No se pudo reenviar la invitación.';
+      const message = error instanceof Error ? error.message : 'No se pudo reenviar la invitación.';
       setErrorMessage(message);
       toast.error(message);
     } finally {

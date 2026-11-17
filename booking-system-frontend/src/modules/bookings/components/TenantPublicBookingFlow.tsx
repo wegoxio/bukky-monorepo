@@ -535,10 +535,7 @@ export default function TenantPublicBookingFlow({ tenantSlug }: TenantPublicBook
       setErrorMessage('Completa la verificación de seguridad para confirmar.');
       return;
     }
-    if (
-      selectedService &&
-      (partySize < 1 || partySize > selectedService.max_party_size)
-    ) {
+    if (selectedService && (partySize < 1 || partySize > selectedService.max_party_size)) {
       setErrorMessage('El número de personas no es válido para el servicio.');
       return;
     }

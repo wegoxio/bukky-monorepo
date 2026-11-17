@@ -21,7 +21,12 @@ const BASE_CAPACITY_OPTIONS = Array.from({ length: 10 }, (_, index) => index + 1
 const BASE_CURRENCY_OPTIONS = ['USD', 'EUR', 'DOP', 'MXN', 'COP'];
 type CapacityPatch = Pick<
   ServiceFormState,
-  'capacity' | 'min_capacity' | 'max_capacity' | 'min_party_size' | 'max_party_size' | 'slot_capacity'
+  | 'capacity'
+  | 'min_capacity'
+  | 'max_capacity'
+  | 'min_party_size'
+  | 'max_party_size'
+  | 'slot_capacity'
 >;
 
 function buildNumberOptions(

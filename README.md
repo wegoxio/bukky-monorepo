@@ -22,6 +22,21 @@ pnpm install --frozen-lockfile
 
 ## Desarrollo local
 
+### Preparación rápida
+
+Los `.env` locales ignorados por Git están configurados para PostgreSQL local, con Turnstile, correo, recordatorios y AWS desactivados. Con Docker Desktop iniciado:
+
+```bash
+pnpm local:setup
+```
+
+El comando levanta PostgreSQL, espera su healthcheck, ejecuta las migraciones y crea el superadministrador local.
+
+```text
+email: admin@bukky.local
+password: BukkyLocal123!
+```
+
 ### 1. Base de datos
 
 ```bash
@@ -32,7 +47,7 @@ La configuración local predeterminada es:
 
 ```text
 host: localhost
-port: 5432
+port: 5433
 database: bukky
 user: bukky
 password: bukky_local
@@ -87,8 +102,8 @@ Las credenciales del superadministrador se toman de `SUPERADMIN_NAME`, `SUPERADM
 En dos terminales:
 
 ```bash
-pnpm --filter booking-system start:dev
-pnpm --filter booking-system-frontend dev
+pnpm dev:backend
+pnpm dev:frontend
 ```
 
 - Frontend: `http://localhost:3000`.

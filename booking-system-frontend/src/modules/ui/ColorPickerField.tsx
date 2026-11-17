@@ -260,13 +260,19 @@ export default function ColorPickerField({
   const boardRef = useRef<HTMLDivElement | null>(null);
 
   const normalizedValue = useMemo(() => normalizeHex(value), [value]);
-  const currentHsv = useMemo(() => rgbToHsv(normalizedValue), [normalizedValue]);
+  const valueHsv = useMemo(() => rgbToHsv(normalizedValue), [normalizedValue]);
+  const [currentHsv, setCurrentHsv] = useState<HsvColor>(valueHsv);
   const currentRgb = useMemo(() => hexToRgb(normalizedValue), [normalizedValue]);
   const currentHsl = useMemo(() => rgbToHsl(normalizedValue), [normalizedValue]);
 
   useEffect(() => {
     setHexInput(normalizedValue);
-  }, [normalizedValue]);
+    setCurrentHsv((previous) => ({
+      h: valueHsv.s === 0 || valueHsv.v === 0 ? previous.h : valueHsv.h,
+      s: valueHsv.v === 0 ? previous.s : valueHsv.s,
+      v: valueHsv.v,
+    }));
+  }, [normalizedValue, valueHsv.h, valueHsv.s, valueHsv.v]);
 
   const triggerValue = useMemo(() => {
     if (inputMode === 'RGB') {
@@ -300,6 +306,17 @@ export default function ColorPickerField({
     setHexInput(parsed);
   };
 
+  const commitHsv = (nextColor: HsvColor) => {
+    const normalizedColor = {
+      h: ((nextColor.h % 360) + 360) % 360,
+      s: clamp(nextColor.s, 0, 100),
+      v: clamp(nextColor.v, 0, 100),
+    };
+
+    setCurrentHsv(normalizedColor);
+    onChange(hsvToHex(normalizedColor));
+  };
+
   const updateSaturationValue = (clientX: number, clientY: number) => {
     const rect = boardRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -307,32 +324,30 @@ export default function ColorPickerField({
     const saturation = clamp(((clientX - rect.left) / rect.width) * 100, 0, 100);
     const valueChannel = clamp(100 - ((clientY - rect.top) / rect.height) * 100, 0, 100);
 
-    onChange(
-      hsvToHex({
-        h: currentHsv.h,
-        s: saturation,
-        v: valueChannel,
-      }),
-    );
+    commitHsv({
+      h: currentHsv.h,
+      s: saturation,
+      v: valueChannel,
+    });
   };
 
   const handleBoardPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (disabled) return;
 
     event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
     updateSaturationValue(event.clientX, event.clientY);
+  };
 
-    const handlePointerMove = (moveEvent: PointerEvent) => {
-      updateSaturationValue(moveEvent.clientX, moveEvent.clientY);
-    };
+  const handleBoardPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (disabled || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    updateSaturationValue(event.clientX, event.clientY);
+  };
 
-    const stopTracking = () => {
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', stopTracking);
-    };
-
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', stopTracking);
+  const handleBoardPointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
   };
 
   return (
@@ -401,6 +416,9 @@ export default function ColorPickerField({
               <div
                 ref={boardRef}
                 onPointerDown={handleBoardPointerDown}
+                onPointerMove={handleBoardPointerMove}
+                onPointerUp={handleBoardPointerEnd}
+                onPointerCancel={handleBoardPointerEnd}
                 className="relative h-36 w-full cursor-crosshair overflow-hidden rounded-2xl border border-card-border"
                 style={{
                   backgroundColor: hsvToHex({ h: currentHsv.h, s: 100, v: 100 }),
@@ -431,17 +449,15 @@ export default function ColorPickerField({
                   <input
                     type="range"
                     min="0"
-                    max="360"
+                    max="359"
                     step="1"
                     value={Math.round(currentHsv.h)}
                     onChange={(event) =>
-                      onChange(
-                        hsvToHex({
-                          h: Number(event.target.value),
-                          s: currentHsv.s,
-                          v: currentHsv.v,
-                        }),
-                      )
+                      commitHsv({
+                        h: Number(event.target.value),
+                        s: currentHsv.s,
+                        v: currentHsv.v,
+                      })
                     }
                     className="color-picker-range absolute inset-0 h-full w-full appearance-none bg-transparent"
                     aria-label="Ajustar tono"

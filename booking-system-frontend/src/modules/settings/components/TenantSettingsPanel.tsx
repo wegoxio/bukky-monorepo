@@ -520,12 +520,9 @@ export default function TenantSettingsPanel() {
         </p>
       ) : null}
 
-      <div className="grid gap-5 xl:grid-cols-[360px_1fr]">
-        <aside
-          data-tour="theme-builder-controls"
-          className="space-y-5 xl:sticky xl:top-4 xl:self-start"
-        >
-          <div data-tour="theme-builder-palette">
+      <div className="grid gap-5 lg:grid-cols-2">
+        <aside data-tour="theme-builder-controls" className="contents">
+          <div data-tour="theme-builder-palette" className="order-1 lg:col-span-2">
             <SectionCard
               title="Colores editables"
               description="Solo editas la base y textos. El sistema deriva hover, superficies y estados automáticamente."
@@ -533,7 +530,7 @@ export default function TenantSettingsPanel() {
               isOpen={expandedSections.palette}
               onToggle={() => toggleSection('palette')}
             >
-              <div className="space-y-3">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
                 {editableThemeFields.map((field) => (
                   <label
                     key={field.key}
@@ -564,7 +561,7 @@ export default function TenantSettingsPanel() {
             </SectionCard>
           </div>
 
-          <div data-tour="theme-builder-branding">
+          <div data-tour="theme-builder-branding" className="order-3">
             <SectionCard
               title="Marca"
               description="Nombre del negocio y título de la ventana."
@@ -603,7 +600,7 @@ export default function TenantSettingsPanel() {
             </SectionCard>
           </div>
 
-          <div data-tour="theme-builder-assets">
+          <div data-tour="theme-builder-assets" className="order-4">
             <SectionCard
               title="Recursos"
               description="Logo y favicon con previsualización antes de guardar."
@@ -710,7 +707,11 @@ export default function TenantSettingsPanel() {
           </div>
         </aside>
 
-        <div data-tour="theme-builder-preview" style={previewStyle} className="space-y-5">
+        <div
+          data-tour="theme-builder-preview"
+          style={previewStyle}
+          className="order-2 min-w-0 space-y-5 lg:col-span-2"
+        >
           <article className="rounded-[24px] border border-card-border bg-card p-5 shadow-theme-card">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -749,9 +750,9 @@ export default function TenantSettingsPanel() {
                   </p>
                 </div>
 
-                <div className="mt-4 grid gap-4 xl:grid-cols-[248px_minmax(0,1fr)]">
+                <div className="mt-4 grid gap-4 2xl:grid-cols-[224px_minmax(0,1fr)]">
                   <aside
-                    className="flex min-h-[590px] flex-col justify-between rounded-[30px] border border-inverse-15 p-5 shadow-theme-shell"
+                    className="flex min-h-[420px] flex-col justify-between rounded-[30px] border border-inverse-15 p-5 shadow-theme-shell 2xl:min-h-[590px]"
                     style={previewSidebarStyle}
                   >
                     <div>

@@ -17,6 +17,7 @@ jobs:
   validate:
     name: Validate release
     runs-on: ubuntu-latest
+    environment: production
     timeout-minutes: 45
     services:
       postgres:
@@ -71,6 +72,7 @@ jobs:
     name: Build and publish images
     needs: validate
     runs-on: ubuntu-latest
+    environment: production
     timeout-minutes: 45
     outputs:
       backend_image: ${{ steps.names.outputs.backend }}
